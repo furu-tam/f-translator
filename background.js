@@ -25,8 +25,8 @@ chrome.runtime.onInstalled.addListener(() => {
 // Background message handler
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.type === 'TRANSLATE_TEXT') {
-    const { text, provider, apiKey, model, customInstruction } = request;
-    translateText(text, provider, apiKey, model, customInstruction).then(translation => {
+    const { text, provider, apiKey, model, customInstruction, context } = request;
+    translateText(text, provider, apiKey, model, customInstruction, context).then(translation => {
       sendResponse({ success: true, translation });
     }).catch(error => {
       sendResponse({ success: false, error: error.message });
@@ -36,17 +36,20 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 });
 
 // Translate text based on provider
-async function translateText(text, provider, apiKey, model = '', customInstruction = '') {
+async function translateText(text, provider, apiKey, model = '', customInstruction = '', context = '') {
   switch(provider) {
-    case 'openai': return await translateWithOpenAI(text, apiKey, model, customInstruction);
-    case 'gemini': return await translateWithGemini(text, apiKey, model, customInstruction);
-    default: return await translateWithClaude(text, apiKey, customInstruction);
+    case 'openai': return await translateWithOpenAI(text, apiKey, model, customInstruction, context);
+    case 'gemini': return await translateWithGemini(text, apiKey, model, customInstruction, context);
+    default: return await translateWithClaude(text, apiKey, customInstruction, context);
   }
 }
 
 // Claude (Anthropic)
-async function translateWithClaude(text, apiKey, customInstruction = '') {
+async function translateWithClaude(text, apiKey, customInstruction = '', context = '') {
   const instruction = customInstruction || 'Dịch sang Tiếng Việt. Chỉ dịch nội dung, không thêm lời bình luận hay giải thích.';
+  const contentMessage = context 
+    ? `${instruction}\n\n[CONTEXT FROM CONVERSATION]\n${context}\n\n[TEXT TO TRANSLATE]\n${text}`
+    : `${instruction}\n\n${text}`;
   
   const response = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -62,7 +65,7 @@ async function translateWithClaude(text, apiKey, customInstruction = '') {
       messages: [
         {
           role: 'user',
-          content: `${instruction}\n\n${text}`
+          content: contentMessage
         }
       ]
     })
@@ -78,9 +81,12 @@ async function translateWithClaude(text, apiKey, customInstruction = '') {
 }
 
 // OpenAI
-async function translateWithOpenAI(text, apiKey, model = '', customInstruction = '') {
+async function translateWithOpenAI(text, apiKey, model = '', customInstruction = '', context = '') {
   const instruction = customInstruction || 'Translate to Vietnamese. Only translate, do not add comments or explanations.';
   const selectedModel = model || 'gpt-4-turbo';
+  const userContent = context
+    ? `[CONTEXT FROM CONVERSATION]\n${context}\n\n[TEXT TO TRANSLATE]\n${text}`
+    : text;
   
   const response = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
@@ -97,7 +103,7 @@ async function translateWithOpenAI(text, apiKey, model = '', customInstruction =
         },
         {
           role: 'user',
-          content: text
+          content: userContent
         }
       ],
       max_tokens: 1024
@@ -114,9 +120,12 @@ async function translateWithOpenAI(text, apiKey, model = '', customInstruction =
 }
 
 // Gemini (Google)
-async function translateWithGemini(text, apiKey, model = '', customInstruction = '') {
+async function translateWithGemini(text, apiKey, model = '', customInstruction = '', context = '') {
   const instruction = customInstruction || 'Dịch sang Tiếng Việt. Chỉ dịch nội dung, không thêm lời bình luận hay giải thích.';
   const selectedModel = model || 'gemini-2.5-flash';
+  const contentMessage = context
+    ? `${instruction}\n\n[CONTEXT FROM CONVERSATION]\n${context}\n\n[TEXT TO TRANSLATE]\n${text}`
+    : `${instruction}\n\n${text}`;
   let retries = 0;
   const maxRetries = 3;
 
@@ -132,7 +141,7 @@ async function translateWithGemini(text, apiKey, model = '', customInstruction =
             {
               parts: [
                 {
-                  text: `${instruction}\n\n${text}`
+                  text: contentMessage
                 }
               ]
             }

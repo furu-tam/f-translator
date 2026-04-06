@@ -88,6 +88,53 @@ function injectTranslateButtons() {
   });
 }
 
+// Collect all issue/ticket content as context for translation
+function collectIssueContext() {
+  const contextParts = [];
+
+  // Collect ticket/issue description
+  const ticketDesc = document.querySelector('.ticket__description, #issueDescription');
+  if (ticketDesc) {
+    const ticketText = ticketDesc.innerText?.trim();
+    if (ticketText) {
+      contextParts.push(`[TICKET DESCRIPTION]\n${ticketText}`);
+    }
+  }
+
+  // Collect GitHub issue body
+  const issueBody = document.querySelector('#issue-body-viewer, .IssueBodyViewer-module__IssueBody__xbjV0, .markdown-body');
+  if (issueBody && !ticketDesc) {
+    const bodyText = issueBody.innerText?.trim();
+    if (bodyText) {
+      contextParts.push(`[ISSUE DESCRIPTION]\n${bodyText}`);
+    }
+  }
+
+  // Collect all comments
+  const allComments = document.querySelectorAll(
+    '.comment-content, .loom.comment-content, [data-testid="issue-comment-viewer"], .IssueCommentViewer-module__IssueCommentViewer__'
+  );
+  
+  // Filter to top-level only
+  const comments = Array.from(allComments).filter(el => {
+    for (let other of allComments) {
+      if (other !== el && other.contains(el)) {
+        return false;
+      }
+    }
+    return true;
+  });
+
+  comments.forEach((comment, index) => {
+    const text = comment.innerText?.trim();
+    if (text && text.length > 5) {
+      contextParts.push(`[COMMENT ${index + 1}]\n${text}`);
+    }
+  });
+
+  return contextParts.length > 0 ? contextParts.join('\n\n---\n\n') : '';
+}
+
 // Translate single comment
 async function translateComment(contentEl, text, button) {
   // Get settings from storage
@@ -117,6 +164,9 @@ async function translateComment(contentEl, text, button) {
     button.disabled = true;
     button.innerHTML = '⏳ Dịch...';
 
+    // Collect full issue context
+    const context = collectIssueContext();
+
     // Call background script to translate
     chrome.runtime.sendMessage(
       {
@@ -125,7 +175,8 @@ async function translateComment(contentEl, text, button) {
         provider: provider,
         apiKey: apiKey,
         model: model,
-        customInstruction: data.customInstruction || ''
+        customInstruction: data.customInstruction || '',
+        context: context
       },
       (response) => {
         button.disabled = false;
