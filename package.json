@@ -1,0 +1,33 @@
+{
+  "name": "backlog-translator-extension",
+  "version": "1.0.0",
+  "description": "Chrome extension to translate backlog comments to Vietnamese using Claude AI",
+  "author": "Development Team",
+  "license": "MIT",
+  "scripts": {
+    "dev": "echo 'Load extension in chrome://extensions with Developer mode enabled'",
+    "package": "zip -r backlog-translator-extension.zip . -x '.git/*' '.gitignore' 'node_modules/*' '*.md'",
+    "test": "echo 'Test manually in Chrome if needed'",
+    "validate": "echo 'Validate manifest.json...' && node -e \"const m = require('./manifest.json'); console.log('✅ Manifest valid:', m.name)\""
+  },
+  "keywords": [
+    "chrome-extension",
+    "translator",
+    "vietnamese",
+    "jira",
+    "salesforce",
+    "backlog",
+    "claude-ai",
+    "anthropic"
+  ],
+  "engines": {
+    "chrome": ">=90"
+  },
+  "manifest": {
+    "version": "1.0.0",
+    "api_version": 3,
+    "platforms": [
+      "chrome"
+    ]
+  }
+}

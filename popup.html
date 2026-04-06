@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Backlog Translator</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            width: 500px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: white;
+            color: #333;
+        }
+
+        .container {
+            padding: 20px;
+        }
+
+        .header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 15px;
+        }
+
+        .header-icon {
+            font-size: 28px;
+        }
+
+        .header h1 {
+            font-size: 20px;
+            color: #667eea;
+            margin: 0;
+        }
+
+        .header p {
+            font-size: 12px;
+            color: #999;
+            margin: 0;
+        }
+
+        .settings {
+            background: #f9f9f9;
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 15px;
+            border: 1px solid #e0e0e0;
+        }
+
+        .setting-group {
+            margin-bottom: 15px;
+        }
+
+        .setting-group:last-child {
+            margin-bottom: 0;
+        }
+
+        label {
+            display: block;
+            font-size: 12px;
+            font-weight: 600;
+            color: #666;
+            margin-bottom: 6px;
+        }
+
+        input[type="text"],
+        input[type="password"],
+        select,
+        textarea {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 13px;
+            background: white;
+            color: #333;
+            font-family: inherit;
+        }
+
+        textarea {
+            resize: vertical;
+            min-height: 80px;
+        }
+
+        input:focus,
+        select:focus,
+        textarea:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        button {
+            flex: 1;
+            padding: 10px 15px;
+            border: none;
+            border-radius: 4px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-primary:active {
+            transform: translateY(0);
+        }
+
+        .btn-secondary {
+            background: #f0f0f0;
+            color: #333;
+            border: 1px solid #ddd;
+        }
+
+        .btn-secondary:hover {
+            background: #e8e8e8;
+        }
+
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .status {
+            padding: 10px 12px;
+            border-radius: 4px;
+            font-size: 13px;
+            margin-bottom: 15px;
+            display: none;
+        }
+
+        .status.success {
+            background: #e8f5e9;
+            color: #2e7d32;
+            border-left: 3px solid #4caf50;
+        }
+
+        .status.error {
+            background: #ffebee;
+            color: #c62828;
+            border-left: 3px solid #f44336;
+        }
+
+        .status.loading {
+            background: #e3f2fd;
+            color: #1565c0;
+            border-left: 3px solid #2196f3;
+        }
+
+        .footer {
+            font-size: 12px;
+            color: #999;
+            border-top: 1px solid #e0e0e0;
+            padding-top: 12px;
+            padding-bottom: 0;
+        }
+
+        .footer p {
+            margin: 0;
+            line-height: 1.5;
+        }
+
+        .info-box {
+            background: #e3f2fd;
+            border-left: 3px solid #2196f3;
+            padding: 10px 12px;
+            border-radius: 4px;
+            margin-bottom: 15px;
+            font-size: 12px;
+            color: #1565c0;
+            line-height: 1.5;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="header-icon">🌐</div>
+            <div>
+                <h1>Backlog Translator</h1>
+                <p>Dịch comments sang Tiếng Việt</p>
+            </div>
+        </div>
+
+        <div class="info-box">
+            ✨ Cách dùng: Mở trang web → Nhấn nút <strong>"🌐 Dịch"</strong> trên từng comment
+        </div>
+
+        <div class="settings">
+            <div class="setting-group">
+                <label for="provider">AI Provider</label>
+                <select id="provider">
+                    <option value="claude">Claude (Anthropic)</option>
+                    <option value="openai">OpenAI (GPT-4)</option>
+                    <option value="gemini">Gemini (Google)</option>
+                </select>
+            </div>
+
+            <div class="setting-group" id="claudeKeyGroup">
+                <label for="claudeKey">Claude API Key (sk-ant-...)</label>
+                <input type="password" id="claudeKey" placeholder="sk-ant-xxxxxx">
+            </div>
+
+            <div class="setting-group" id="openaiKeyGroup" style="display: none;">
+                <label for="openaiKey">OpenAI API Key (sk-...)</label>
+                <input type="password" id="openaiKey" placeholder="sk-xxxxxx">
+            </div>
+
+            <div class="setting-group" id="geminiKeyGroup" style="display: none;">
+                <label for="geminiKey">Gemini API Key (AIzaSy...)</label>
+                <input type="password" id="geminiKey" placeholder="AIzaSyxxxxxx">
+            </div>
+
+            <div class="setting-group">
+                <label for="customInstruction">Custom Instruction (Tùy chỉnh)</label>
+                <textarea id="customInstruction" placeholder="VD: Dịch sang Tiếng Việt theo phong cách chuyên môn. Giữ nguyên các từ kỹ thuật.&#10;Để trống để dùng hướng dẫn mặc định."></textarea>
+            </div>
+        </div>
+
+        <div class="button-group">
+            <button class="btn-primary" id="saveSettings">💾 Lưu cài đặt</button>
+        </div>
+
+        <div class="status" id="status"></div>
+
+        <div class="footer">
+            <p>💡 <strong>Lưu ý:</strong> Sau khi cài đặt API key, mở bất kỳ trang web nào có comments (Jira, Salesforce, v.v.). Các nút "🌐 Dịch" sẽ xuất hiện trên mỗi comment.</p>
+        </div>
+    </div>
+
+    <script src="popup.js"></script>
+</body>
+</html>
