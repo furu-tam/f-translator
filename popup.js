@@ -8,18 +8,21 @@ const status = document.getElementById('status');
 const provider = document.getElementById('provider');
 const claudeKey = document.getElementById('claudeKey');
 const openaiKey = document.getElementById('openaiKey');
+const openaiModel = document.getElementById('openaiModel');
 const geminiKey = document.getElementById('geminiKey');
+const geminiModel = document.getElementById('geminiModel');
 const customInstruction = document.getElementById('customInstruction');
-const translateMode = document.getElementById('translateMode');
 
 let currentProvider = 'claude';
 
 // Load saved settings from storage
-chrome.storage.local.get(['provider', 'claudeKey', 'openaiKey', 'geminiKey', 'customInstruction'], (data) => {
+chrome.storage.local.get(['provider', 'claudeKey', 'openaiKey', 'openaiModel', 'geminiKey', 'geminiModel', 'customInstruction'], (data) => {
   currentProvider = data.provider || 'claude';
   if (data.claudeKey) claudeKey.value = data.claudeKey;
   if (data.openaiKey) openaiKey.value = data.openaiKey;
+  if (data.openaiModel) openaiModel.value = data.openaiModel;
   if (data.geminiKey) geminiKey.value = data.geminiKey;
+  if (data.geminiModel) geminiModel.value = data.geminiModel;
   if (data.customInstruction) customInstruction.value = data.customInstruction;
   
   provider.value = currentProvider;
@@ -36,7 +39,9 @@ provider.addEventListener('change', () => {
 function updateProviderUI() {
   document.getElementById('claudeKeyGroup').style.display = currentProvider === 'claude' ? 'block' : 'none';
   document.getElementById('openaiKeyGroup').style.display = currentProvider === 'openai' ? 'block' : 'none';
+  document.getElementById('openaiModelGroup').style.display = currentProvider === 'openai' ? 'block' : 'none';
   document.getElementById('geminiKeyGroup').style.display = currentProvider === 'gemini' ? 'block' : 'none';
+  document.getElementById('geminiModelGroup').style.display = currentProvider === 'gemini' ? 'block' : 'none';
 }
 
 // Save API keys and settings
@@ -51,7 +56,9 @@ saveSettingsBtn.addEventListener('click', () => {
     provider: currentProvider,
     claudeKey: claudeKey.value,
     openaiKey: openaiKey.value,
+    openaiModel: openaiModel.value,
     geminiKey: geminiKey.value,
+    geminiModel: geminiModel.value,
     customInstruction: customInstruction.value || ''
   };
   

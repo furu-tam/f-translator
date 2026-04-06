@@ -25,8 +25,8 @@ chrome.runtime.onInstalled.addListener(() => {
 // Background message handler
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.type === 'TRANSLATE_TEXT') {
-    const { text, provider, apiKey, customInstruction } = request;
-    translateText(text, provider, apiKey, customInstruction).then(translation => {
+    const { text, provider, apiKey, model, customInstruction } = request;
+    translateText(text, provider, apiKey, model, customInstruction).then(translation => {
       sendResponse({ success: true, translation });
     }).catch(error => {
       sendResponse({ success: false, error: error.message });
@@ -36,10 +36,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 });
 
 // Translate text based on provider
-async function translateText(text, provider, apiKey, customInstruction = '') {
+async function translateText(text, provider, apiKey, model = '', customInstruction = '') {
   switch(provider) {
-    case 'openai': return await translateWithOpenAI(text, apiKey, customInstruction);
-    case 'gemini': return await translateWithGemini(text, apiKey, customInstruction);
+    case 'openai': return await translateWithOpenAI(text, apiKey, model, customInstruction);
+    case 'gemini': return await translateWithGemini(text, apiKey, model, customInstruction);
     default: return await translateWithClaude(text, apiKey, customInstruction);
   }
 }
@@ -78,8 +78,9 @@ async function translateWithClaude(text, apiKey, customInstruction = '') {
 }
 
 // OpenAI
-async function translateWithOpenAI(text, apiKey, customInstruction = '') {
+async function translateWithOpenAI(text, apiKey, model = '', customInstruction = '') {
   const instruction = customInstruction || 'Translate to Vietnamese. Only translate, do not add comments or explanations.';
+  const selectedModel = model || 'gpt-4-turbo';
   
   const response = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
@@ -88,7 +89,7 @@ async function translateWithOpenAI(text, apiKey, customInstruction = '') {
       'Authorization': `Bearer ${apiKey}`
     },
     body: JSON.stringify({
-      model: 'gpt-4-turbo',
+      model: selectedModel,
       messages: [
         {
           role: 'system',
@@ -113,14 +114,15 @@ async function translateWithOpenAI(text, apiKey, customInstruction = '') {
 }
 
 // Gemini (Google)
-async function translateWithGemini(text, apiKey, customInstruction = '') {
+async function translateWithGemini(text, apiKey, model = '', customInstruction = '') {
   const instruction = customInstruction || 'Dịch sang Tiếng Việt. Chỉ dịch nội dung, không thêm lời bình luận hay giải thích.';
+  const selectedModel = model || 'gemini-2.5-flash';
   let retries = 0;
   const maxRetries = 3;
 
   while (retries <= maxRetries) {
     try {
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1/models/${selectedModel}:generateContent?key=${apiKey}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'

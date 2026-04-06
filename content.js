@@ -3,18 +3,36 @@
  * Runs in the context of the web page
  */
 
-// Inject translate button into all comments (only 1 per comment-content)
+// Inject translate button into all comments and ticket description
 function injectTranslateButtons() {
-  // Find all comment-content elements (actual comment text)
-  const commentContents = document.querySelectorAll('.comment-content, .loom.comment-content');
+  // Find all content elements for both Backlog and GitHub/Git platforms
+  const allContentElements = document.querySelectorAll(
+    // Backlog selectors
+    '.comment-content, .loom.comment-content, .ticket__description, #issueDescription, ' +
+    // GitHub/Git selectors
+    '#issue-body-viewer, .markdown-body, .IssueBodyViewer-module__IssueBody__xbjV0, ' +
+    // Comment viewers for GitHub
+    '[data-testid="issue-comment-viewer"], .IssueCommentViewer-module__IssueCommentViewer__'
+  );
 
-  commentContents.forEach((contentEl) => {
+  // Filter to keep only top-level elements (not nested within other matched elements)
+  const contentElements = Array.from(allContentElements).filter(el => {
+    // Check if this element is a child of any other matched element
+    for (let other of allContentElements) {
+      if (other !== el && other.contains(el)) {
+        return false; // Skip if it's nested inside another matched element
+      }
+    }
+    return true;
+  });
+
+  contentElements.forEach((contentEl) => {
     // Skip if button already exists in this content
     if (contentEl.querySelector('.translator-btn')) {
       return;
     }
 
-    // Get text from comment-content only
+    // Get text from content
     const text = contentEl.innerText?.trim();
     if (!text || text.length < 5) {
       return;
@@ -22,7 +40,7 @@ function injectTranslateButtons() {
 
     // Create and style button
     const button = document.createElement('button');
-    button.className = 'translator-btn';
+    button.className = 'translator-btn'; 
     button.innerHTML = '🌐 Dịch';
     button.style.cssText = `
       display: block;
@@ -73,13 +91,20 @@ function injectTranslateButtons() {
 // Translate single comment
 async function translateComment(contentEl, text, button) {
   // Get settings from storage
-  chrome.storage.local.get(['provider', 'claudeKey', 'openaiKey', 'geminiKey', 'customInstruction'], (data) => {
+  chrome.storage.local.get(['provider', 'claudeKey', 'openaiKey', 'openaiModel', 'geminiKey', 'geminiModel', 'customInstruction'], (data) => {
     const provider = data.provider || 'claude';
     let apiKey = '';
+    let model = '';
     
     switch(provider) {
-      case 'openai': apiKey = data.openaiKey; break;
-      case 'gemini': apiKey = data.geminiKey; break;
+      case 'openai': 
+        apiKey = data.openaiKey; 
+        model = data.openaiModel || 'gpt-4-turbo';
+        break;
+      case 'gemini': 
+        apiKey = data.geminiKey; 
+        model = data.geminiModel || 'gemini-2.5-flash';
+        break;
       default: apiKey = data.claudeKey;
     }
 
@@ -99,6 +124,7 @@ async function translateComment(contentEl, text, button) {
         text: text,
         provider: provider,
         apiKey: apiKey,
+        model: model,
         customInstruction: data.customInstruction || ''
       },
       (response) => {
@@ -115,6 +141,93 @@ async function translateComment(contentEl, text, button) {
   });
 }
 
+// Convert plain text to formatted HTML
+function formatTranslationText(text) {
+  // Escape HTML first
+  let html = text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+
+  // Split into lines
+  const lines = html.split('\n');
+  let formatted = [];
+  let inList = false;
+  let inParagraph = false;
+  let paragraph = [];
+
+  lines.forEach((line, idx) => {
+    const trimmed = line.trim();
+
+    // Skip empty lines but close paragraph
+    if (!trimmed) {
+      if (paragraph.length > 0) {
+        formatted.push(`<p>${paragraph.join(' ')}</p>`);
+        paragraph = [];
+        inParagraph = false;
+      }
+      if (inList) {
+        formatted.push('</ul>');
+        inList = false;
+      }
+      return;
+    }
+
+    // Detect heading (line that looks like heading - typically shorter, or ends with colons)
+    if (trimmed.match(/^[ぁ-ん一-龯ァ-ヴー々〆〤a-zA-Z0-9]{2,30}$/) && idx > 0 && lines[idx + 1]?.trim() === '') {
+      if (paragraph.length > 0) {
+        formatted.push(`<p>${paragraph.join(' ')}</p>`);
+        paragraph = [];
+      }
+      if (inList) {
+        formatted.push('</ul>');
+        inList = false;
+      }
+      formatted.push(`<h2>${trimmed}</h2>`);
+      return;
+    }
+
+    // Detect list items (starting with · or -)
+    if (trimmed.match(/^[・\-•*]\s/)) {
+      if (paragraph.length > 0) {
+        formatted.push(`<p>${paragraph.join(' ')}</p>`);
+        paragraph = [];
+        inParagraph = false;
+      }
+
+      if (!inList) {
+        formatted.push('<ul>');
+        inList = true;
+      }
+
+      const listItem = trimmed.replace(/^[・\-•*]\s+/, '');
+      formatted.push(`<li>${listItem}</li>`);
+      return;
+    }
+
+    // Regular paragraph
+    if (inList) {
+      formatted.push('</ul>');
+      inList = false;
+    }
+
+    paragraph.push(trimmed);
+    inParagraph = true;
+  });
+
+  // Close remaining elements
+  if (paragraph.length > 0) {
+    formatted.push(`<p>${paragraph.join(' ')}</p>`);
+  }
+  if (inList) {
+    formatted.push('</ul>');
+  }
+
+  return formatted.join('\n');
+}
+
 // Display translation below comment
 function displayTranslation(contentEl, original, translation) {
   // Remove existing translation if any
@@ -122,6 +235,9 @@ function displayTranslation(contentEl, original, translation) {
   if (existing) {
     existing.remove();
   }
+
+  // Format translation text to HTML
+  const formattedTranslation = formatTranslationText(translation);
 
   const resultDiv = document.createElement('div');
   resultDiv.className = 'translator-result';
@@ -136,6 +252,100 @@ function displayTranslation(contentEl, original, translation) {
   `;
 
   resultDiv.innerHTML = `
+    <style>
+      .translator-result h1 {
+        font-size: 24px;
+        font-weight: bold;
+        margin: 16px 0 8px 0;
+        border-bottom: 2px solid #4caf50;
+        padding-bottom: 4px;
+      }
+      .translator-result h2 {
+        font-size: 20px;
+        font-weight: bold;
+        margin: 14px 0 8px 0;
+        border-bottom: 1px solid #81c784;
+        padding-bottom: 4px;
+      }
+      .translator-result h3 {
+        font-size: 18px;
+        font-weight: bold;
+        margin: 12px 0 6px 0;
+      }
+      .translator-result h4,
+      .translator-result h5,
+      .translator-result h6 {
+        font-size: 16px;
+        font-weight: bold;
+        margin: 10px 0 4px 0;
+      }
+      .translator-result p {
+        margin: 8px 0;
+        line-height: 1.6;
+      }
+      .translator-result ul,
+      .translator-result ol {
+        margin: 8px 0;
+        padding-left: 24px;
+      }
+      .translator-result li {
+        margin: 4px 0;
+        line-height: 1.6;
+      }
+      .translator-result a {
+        color: #1976d2;
+        text-decoration: underline;
+      }
+      .translator-result a:hover {
+        color: #1565c0;
+      }
+      .translator-result code {
+        background: rgba(0,0,0,0.08);
+        padding: 2px 6px;
+        border-radius: 3px;
+        font-family: monospace;
+        font-size: 12px;
+      }
+      .translator-result pre {
+        background: rgba(0,0,0,0.08);
+        padding: 8px;
+        border-radius: 3px;
+        overflow-x: auto;
+        font-family: monospace;
+        font-size: 12px;
+      }
+      .translator-result blockquote {
+        border-left: 4px solid #81c784;
+        padding-left: 12px;
+        margin-left: 0;
+        color: #558b2f;
+        font-style: italic;
+      }
+      .translator-result strong,
+      .translator-result b {
+        font-weight: bold;
+        color: #1b5e20;
+      }
+      .translator-result em,
+      .translator-result i {
+        font-style: italic;
+      }
+      .translator-result table {
+        border-collapse: collapse;
+        width: 100%;
+        margin: 8px 0;
+      }
+      .translator-result table th,
+      .translator-result table td {
+        border: 1px solid #81c784;
+        padding: 8px;
+        text-align: left;
+      }
+      .translator-result table th {
+        background: rgba(76, 175, 80, 0.1);
+        font-weight: bold;
+      }
+    </style>
     <div style="font-weight: 600; margin-bottom: 6px;">📝 Bản dịch:
       <button class="copy-trans-btn" style="
         float: right;
@@ -148,7 +358,7 @@ function displayTranslation(contentEl, original, translation) {
         font-size: 11px;
       ">📋 Copy</button>
     </div>
-    <div>${escapeHtml(translation)}</div>
+    <div style="clear: both; margin-top: 6px;">${formattedTranslation}</div>
   `;
 
   // Copy button handler
@@ -195,7 +405,7 @@ function escapeHtml(text) {
 // Run on page load
 injectTranslateButtons();
 
-// Re-run when DOM changes (for infinite scroll, lazy loading)
+// Re-run when DOM changes (for infinite scroll, lazy loading, dynamic content)
 const observer = new MutationObserver(() => {
   injectTranslateButtons();
 });
@@ -205,4 +415,4 @@ observer.observe(document.body, {
   subtree: true
 });
 
-console.log('✅ Content script loaded - Translate buttons injected');
+console.log('✅ Content script loaded - Translate buttons injected on comments & ticket description (Backlog, GitHub, Jira, etc)');

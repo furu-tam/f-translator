@@ -229,9 +229,28 @@
                 <input type="password" id="openaiKey" placeholder="sk-xxxxxx">
             </div>
 
+            <div class="setting-group" id="openaiModelGroup" style="display: none;">
+                <label for="openaiModel">OpenAI Model</label>
+                <select id="openaiModel">
+                    <option value="gpt-4-turbo">GPT-4 Turbo (gpt-4-turbo)</option>
+                    <option value="gpt-4">GPT-4 (gpt-4)</option>
+                    <option value="gpt-3.5-turbo">GPT-3.5 Turbo (gpt-3.5-turbo)</option>
+                </select>
+            </div>
+
             <div class="setting-group" id="geminiKeyGroup" style="display: none;">
                 <label for="geminiKey">Gemini API Key (AIzaSy...)</label>
                 <input type="password" id="geminiKey" placeholder="AIzaSyxxxxxx">
+            </div>
+
+            <div class="setting-group" id="geminiModelGroup" style="display: none;">
+                <label for="geminiModel">Gemini Model</label>
+                <select id="geminiModel">
+                    <option value="gemini-2.5-flash">Gemini 2.5 Flash (Recommended)</option>
+                    <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
+                    <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
+                    <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
+                </select>
             </div>
 
             <div class="setting-group">
