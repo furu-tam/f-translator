@@ -36,42 +36,118 @@ const SUPPORTED_LANGUAGES = {
 
 // Inject translate button into all comments and ticket description
 function injectTranslateButtons() {
-  // Find all content elements for both Backlog and GitHub/Git platforms
-  const allContentElements = document.querySelectorAll(
-    // Backlog selectors
-    '.comment-content, .loom.comment-content, .ticket__description, #issueDescription, ' +
-    // GitHub/Git selectors
-    '#issue-body-viewer, .markdown-body, .IssueBodyViewer-module__IssueBody__xbjV0, ' +
-    // Comment viewers for GitHub
-    '[data-testid="issue-comment-viewer"], .IssueCommentViewer-module__IssueCommentViewer__'
-  );
+  // Handle Backlog comments separately
+  injectBacklogTranslateButtons();
+  
+  // Handle GitHub comments
+  injectGitHubTranslateButtons();
+  
+  // Handle Jira comments and descriptions
+  injectJiraTranslateButtons();
+  
+  // Handle ticket descriptions
+  injectTicketDescriptionTranslateButton();
+}
 
-  // Filter to keep only top-level elements (not nested within other matched elements)
-  const contentElements = Array.from(allContentElements).filter(el => {
-    // Check if this element is a child of any other matched element
-    for (let other of allContentElements) {
-      if (other !== el && other.contains(el)) {
-        return false; // Skip if it's nested inside another matched element
-      }
-    }
-    return true;
-  });
-
-  contentElements.forEach((contentEl) => {
-    // Skip if button already exists in this content
-    if (contentEl.querySelector('.translator-btn')) {
+// Inject translate buttons for Backlog comments (1 button per comment item)
+function injectBacklogTranslateButtons() {
+  // Select comment items and ticket description
+  const commentItems = document.querySelectorAll('.comment-item__inner');
+  
+  commentItems.forEach((commentItem) => {
+    // Find the content element within this comment item
+    const contentEl = commentItem.querySelector('.comment-content, .loom.comment-content');
+    if (!contentEl) return;
+    
+    // Skip if button already exists
+    if (commentItem.querySelector('.translator-btn')) {
       return;
     }
-
+    
     // Get text from content
     const text = contentEl.innerText?.trim();
     if (!text || text.length < 5) {
       return;
     }
-
-    // Create and style button
+    
+    // Create button with icon-button style (like star button)
     const button = document.createElement('button');
-    button.className = 'translator-btn'; 
+    button.className = 'translator-btn icon-button icon-button--default'; 
+    button.innerHTML = '🌐';
+    button.title = 'Translate comment';
+    button.type = 'button';
+    button.style.cssText = `
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: transparent;
+      color: #333;
+      border: none;
+      padding: 4px 8px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+      margin-right: 8px;
+      transition: all 0.2s ease;
+      white-space: nowrap;
+      opacity: 0.7;
+    `;
+    
+    button.addEventListener('mouseover', () => {
+      button.style.backgroundColor = '#f0f0f0';
+      button.style.opacity = '1';
+    });
+    
+    button.addEventListener('mouseout', () => {
+      button.style.backgroundColor = 'transparent';
+      button.style.opacity = '0.7';
+    });
+    
+    button.addEventListener('click', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const commentText = contentEl.innerText?.trim();
+      if (!commentText) {
+        showErr(contentEl, '❌ Không tìm thấy text để dịch');
+        return;
+      }
+      translateComment(contentEl, commentText, button);
+    });
+    
+    // Insert button into comment-item__actions before star-container
+    const actionsDiv = commentItem.querySelector('.comment-item__actions');
+    const starContainer = actionsDiv?.querySelector('.star-container');
+    if (starContainer) {
+      starContainer.parentElement.insertBefore(button, starContainer);
+    } else if (actionsDiv) {
+      actionsDiv.insertBefore(button, actionsDiv.firstChild);
+    }
+  });
+}
+
+// Inject translate buttons for GitHub comments
+function injectGitHubTranslateButtons() {
+  // Find comment containers by looking for markdown-body within comment items
+  const markdownBodies = document.querySelectorAll('.markdown-body');
+  
+  markdownBodies.forEach((contentEl) => {
+    // Skip if button already added to this element
+    if (contentEl.querySelector('.translator-btn')) {
+      return;
+    }
+    
+    // Get the parent comment container
+    const container = contentEl.closest('[data-testid="issue-comment-viewer"], .Box-row, [class*="Comment"]');
+    if (!contentEl) return;
+    
+    const text = contentEl.innerText?.trim();
+    if (!text || text.length < 5) {
+      return;
+    }
+    
+    // Create button
+    const button = document.createElement('button');
+    button.className = 'translator-btn';
     button.innerHTML = '🌐 Dịch';
     button.style.cssText = `
       display: block;
@@ -84,47 +160,167 @@ function injectTranslateButtons() {
       font-size: 12px;
       font-weight: 600;
       margin-top: 12px;
-      margin-bottom: 0;
       transition: all 0.3s ease;
       width: 100%;
     `;
-
+    
     button.addEventListener('mouseover', () => {
       button.style.transform = 'translateY(-2px)';
       button.style.boxShadow = '0 4px 12px rgba(102, 126, 234, 0.4)';
     });
-
+    
     button.addEventListener('mouseout', () => {
       button.style.transform = 'translateY(0)';
       button.style.boxShadow = 'none';
     });
-
+    
     button.addEventListener('click', async (e) => {
       e.preventDefault();
       e.stopPropagation();
-      
-      // Get text from comment-content only
       const commentText = contentEl.innerText?.trim();
       if (!commentText) {
-        showErr(contentEl, '❌ Không tìm thấy text để dịch');
+        showErr(contentEl, '❌ No content to translate');
         return;
       }
-
-      // Use comment-content element as target for translation display
       translateComment(contentEl, commentText, button);
     });
-
-    // Inject button after comment-content
-    contentEl.appendChild(button);
+    
+    // Append button after markdown content
+    const existingButton = contentEl.parentElement?.querySelector('.translator-btn');
+    if (!existingButton) {
+      contentEl.appendChild(button);
+    }
   });
+}
+
+// Inject translate buttons for Jira comments
+function injectJiraTranslateButtons() {
+  const jiraComments = document.querySelectorAll('.ak-renderer-wrapper.is-comment');
+  
+  jiraComments.forEach((commentEl) => {
+    // Skip if button already exists in this comment
+    if (commentEl.parentElement?.querySelector('.translator-btn')) {
+      return;
+    }
+    
+    const text = commentEl.innerText?.trim();
+    if (!text || text.length < 5) {
+      return;
+    }
+    
+    // Create button
+    const button = document.createElement('button');
+    button.className = 'translator-btn';
+    button.innerHTML = '🌐 Dịch';
+    button.style.cssText = `
+      display: block;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      border: none;
+      padding: 8px 14px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+      margin-top: 12px;
+      transition: all 0.3s ease;
+      width: 100%;
+    `;
+    
+    button.addEventListener('mouseover', () => {
+      button.style.transform = 'translateY(-2px)';
+      button.style.boxShadow = '0 4px 12px rgba(102, 126, 234, 0.4)';
+    });
+    
+    button.addEventListener('mouseout', () => {
+      button.style.transform = 'translateY(0)';
+      button.style.boxShadow = 'none';
+    });
+    
+    button.addEventListener('click', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const commentText = commentEl.innerText?.trim();
+      if (!commentText) {
+        showErr(commentEl, '❌ No content to translate');
+        return;
+      }
+      translateComment(commentEl, commentText, button);
+    });
+    
+    commentEl.appendChild(button);
+  });
+}
+
+// Inject translate button for ticket descriptions
+function injectTicketDescriptionTranslateButton() {
+  // Backlog/Jira ticket description
+  const ticketDesc = document.querySelector('.ticket__description, #issueDescription, [data-testid="issue.views.field.rich-text.description"]');
+  
+  if (!ticketDesc || ticketDesc.querySelector('.translator-btn')) {
+    return;
+  }
+  
+  const text = ticketDesc.innerText?.trim();
+  if (!text || text.length < 5) {
+    return;
+  }
+  
+  // Create button
+  const button = document.createElement('button');
+  button.className = 'translator-btn';
+  button.innerHTML = '🌐 Dịch';
+  button.style.cssText = `
+    display: block;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border: none;
+    padding: 8px 14px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 600;
+    margin-top: 12px;
+    transition: all 0.3s ease;
+    width: 100%;
+  `;
+  
+  button.addEventListener('mouseover', () => {
+    button.style.transform = 'translateY(-2px)';
+    button.style.boxShadow = '0 4px 12px rgba(102, 126, 234, 0.4)';
+  });
+  
+  button.addEventListener('mouseout', () => {
+    button.style.transform = 'translateY(0)';
+    button.style.boxShadow = 'none';
+  });
+  
+  button.addEventListener('click', async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const descText = ticketDesc.innerText?.trim();
+    if (!descText) {
+      showErr(ticketDesc, '❌ No content to translate');
+      return;
+    }
+    translateComment(ticketDesc, descText, button);
+  });
+  
+  // Find and insert before GitHub issue body viewer if present
+  const issueBodyViewer = document.querySelector('#issue-body-viewer, .IssueBodyViewer-module__IssueBody__xbjV0');
+  if (issueBodyViewer) {
+    issueBodyViewer.appendChild(button);
+  } else {
+    ticketDesc.appendChild(button);
+  }
 }
 
 // Collect all issue/ticket content as context for translation
 function collectIssueContext() {
   const contextParts = [];
 
-  // Collect ticket/issue description
-  const ticketDesc = document.querySelector('.ticket__description, #issueDescription');
+  // Collect ticket/issue description (Backlog/Jira)
+  const ticketDesc = document.querySelector('.ticket__description, #issueDescription, .ak-renderer-wrapper.is-comment, [data-testid="issue.views.field.rich-text.description"]');
   if (ticketDesc) {
     const ticketText = ticketDesc.innerText?.trim();
     if (ticketText) {
@@ -169,7 +365,7 @@ function collectIssueContext() {
 // Translate single comment
 async function translateComment(contentEl, text, button) {
   // Get settings from storage
-  chrome.storage.local.get(['provider', 'claudeKey', 'openaiKey', 'openaiModel', 'geminiKey', 'geminiModel', 'customInstruction'], (data) => {
+  chrome.storage.local.get(['provider', 'claudeKey', 'openaiKey', 'openaiModel', 'geminiKey', 'geminiModel', 'includeTicketContext', 'customInstruction'], (data) => {
     const provider = data.provider || 'claude';
     let apiKey = '';
     let model = '';
@@ -195,8 +391,9 @@ async function translateComment(contentEl, text, button) {
     button.disabled = true;
     button.innerHTML = '⏳ Dịch...';
 
-    // Collect full issue context
-    const context = collectIssueContext();
+    // Collect full issue context only if enabled
+    const includeContext = data.includeTicketContext !== false;
+    const context = includeContext ? collectIssueContext() : '';
 
     // Call background script to translate
     chrome.runtime.sendMessage(
@@ -614,7 +811,7 @@ function translateEditorContent(targetLang, button) {
   button.innerHTML = '⏳ Dịch...';
 
   // Get settings
-  chrome.storage.local.get(['provider', 'claudeKey', 'openaiKey', 'openaiModel', 'geminiKey', 'geminiModel', 'customInstruction'], (data) => {
+  chrome.storage.local.get(['provider', 'claudeKey', 'openaiKey', 'openaiModel', 'geminiKey', 'geminiModel', 'includeTicketContext', 'customInstruction'], (data) => {
     const provider = data.provider || 'claude';
     let apiKey = '';
     let model = '';
@@ -638,10 +835,12 @@ function translateEditorContent(targetLang, button) {
       return;
     }
 
-    // Collect full issue context
-    const context = collectIssueContext();
+    // Collect full issue context only if enabled
+    const includeContext = data.includeTicketContext !== false;
+    const context = includeContext ? collectIssueContext() : '';
     const langName = SUPPORTED_LANGUAGES[targetLang];
-    const translationInstruction = `Translate to ${langName}. Only translate, do not add comments or explanations. Preserve formatting.`;
+    const contextNote = includeContext ? ' (Use ticket context as reference, but main focus is translating the selected comment)' : '';
+    const translationInstruction = `Translate to ${langName}. Only translate, do not add comments or explanations. Preserve formatting.${contextNote}`;
 
     // Send to background script
     chrome.runtime.sendMessage(
@@ -963,7 +1162,7 @@ function translateGitHubEditorContent(targetLang, button, textarea, composerCont
   button.innerHTML = '⏳ Translating...';
 
   // Get settings
-  chrome.storage.local.get(['provider', 'claudeKey', 'openaiKey', 'openaiModel', 'geminiKey', 'geminiModel', 'customInstruction'], (data) => {
+  chrome.storage.local.get(['provider', 'claudeKey', 'openaiKey', 'openaiModel', 'geminiKey', 'geminiModel', 'includeTicketContext', 'customInstruction'], (data) => {
     const provider = data.provider || 'claude';
     let apiKey = '';
     let model = '';
@@ -987,10 +1186,12 @@ function translateGitHubEditorContent(targetLang, button, textarea, composerCont
       return;
     }
 
-    // Collect full issue context
-    const context = collectIssueContext();
+    // Collect full issue context only if enabled
+    const includeContext = data.includeTicketContext !== false;
+    const context = includeContext ? collectIssueContext() : '';
     const langName = SUPPORTED_LANGUAGES[targetLang];
-    const translationInstruction = `Translate to ${langName}. Only translate, do not add comments or explanations. Preserve formatting.`;
+    const contextNote = includeContext ? ' (Use issue context as reference, but main focus is translating the selected comment)' : '';
+    const translationInstruction = `Translate to ${langName}. Only translate, do not add comments or explanations. Preserve formatting.${contextNote}`;
 
     // Send to background script
     chrome.runtime.sendMessage(
@@ -1280,7 +1481,7 @@ function translateReviewThreadReplyContent(textarea, language, form, button) {
   button.textContent = '⏳ Đang dịch...';
 
   // Get provider and API key
-  chrome.storage.local.get(['provider', 'claudeKey', 'openaiKey', 'geminiKey', 'openaiModel', 'geminiModel', 'customInstruction'], (data) => {
+  chrome.storage.local.get(['provider', 'claudeKey', 'openaiKey', 'geminiKey', 'openaiModel', 'geminiModel', 'includeTicketContext', 'customInstruction'], (data) => {
     const provider = data.provider || 'claude';
     const apiKey = data[provider + 'Key'];
     let model = '';
@@ -1301,10 +1502,12 @@ function translateReviewThreadReplyContent(textarea, language, form, button) {
         break;
     }
 
-    // Collect issue context
-    const context = collectIssueContext();
+    // Collect issue context only if enabled
+    const includeContext = data.includeTicketContext !== false;
+    const context = includeContext ? collectIssueContext() : '';
     const langName = SUPPORTED_LANGUAGES[language];
-    const translationInstruction = `Translate to ${langName}. Only translate, do not add comments or explanations. Preserve formatting.`;
+    const contextNote = includeContext ? ' (Use issue context as reference, but main focus is translating the selected comment)' : '';
+    const translationInstruction = `Translate to ${langName}. Only translate, do not add comments or explanations. Preserve formatting.${contextNote}`;
 
     // Send translation request using correct message format
     chrome.runtime.sendMessage({
@@ -1482,11 +1685,299 @@ function displayReviewThreadReplyTranslationPreview(translation, form) {
   form.parentNode.insertBefore(resultDiv, form);
 }
 
+// Jira Comment Editor Translation
+function injectJiraCommentEditorTranslation() {
+  // Find all Jira editor containers in comment threads
+  const editorContainers = document.querySelectorAll('[data-testid="issue.component.editor.default-editor"], .akEditor');
+  
+  editorContainers.forEach(container => {
+    // Check if already injected
+    if (container.querySelector('[data-translator-jira-controls="true"]')) {
+      return;
+    }
+
+    // Find the ProseMirror editor area
+    const editor = container.querySelector('.ProseMirror');
+    if (!editor) return;
+
+    // Find the toolbar
+    const toolbar = container.querySelector('[data-testid="ak-editor-main-toolbar"], .ak-editor-main-toolbar');
+    if (!toolbar) return;
+
+    // Create controls container
+    const controlsDiv = document.createElement('div');
+    controlsDiv.setAttribute('data-translator-jira-controls', 'true');
+    controlsDiv.style.cssText = `
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      padding: 8px 12px;
+      background: #f5f5f5;
+      border-top: 1px solid #ddd;
+      border-bottom: 1px solid #ddd;
+      margin-top: 8px;
+    `;
+
+    // Language selector
+    const langSelect = document.createElement('select');
+    langSelect.className = 'translator-jira-lang-select';
+    langSelect.style.cssText = `
+      padding: 6px 10px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      background: white;
+      font-size: 12px;
+      cursor: pointer;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    `;
+
+    const defaultOption = document.createElement('option');
+    defaultOption.value = '';
+    defaultOption.textContent = '📖 Choose language...';
+    langSelect.appendChild(defaultOption);
+
+    Object.entries(SUPPORTED_LANGUAGES).forEach(([code, name]) => {
+      const option = document.createElement('option');
+      option.value = code;
+      option.textContent = name;
+      langSelect.appendChild(option);
+    });
+
+    langSelect.value = 'en'; // Default to English
+
+    // Translate button
+    const translateBtn = document.createElement('button');
+    translateBtn.type = 'button';
+    translateBtn.textContent = '🌐 Dịch';
+    translateBtn.style.cssText = `
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      border: none;
+      padding: 6px 14px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+      transition: all 0.3s ease;
+      white-space: nowrap;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    `;
+
+    translateBtn.addEventListener('mouseover', () => {
+      translateBtn.style.transform = 'translateY(-2px)';
+      translateBtn.style.boxShadow = '0 4px 12px rgba(102, 126, 234, 0.4)';
+    });
+
+    translateBtn.addEventListener('mouseout', () => {
+      translateBtn.style.transform = 'translateY(0)';
+      translateBtn.style.boxShadow = 'none';
+    });
+
+    translateBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!langSelect.value) {
+        alert('❌ Please select a language');
+        return;
+      }
+      translateJiraCommentContent(editor, langSelect.value, container, translateBtn);
+    });
+
+    controlsDiv.appendChild(langSelect);
+    controlsDiv.appendChild(translateBtn);
+
+    // Insert controls after toolbar
+    toolbar.parentNode.insertBefore(controlsDiv, toolbar.nextSibling);
+
+    // Mark as injected
+    editor.setAttribute('data-translator-jira-injected', 'true');
+  });
+}
+
+function translateJiraCommentContent(editor, language, container, button) {
+  // Get text from ProseMirror editor
+  const text = editor.innerText?.trim();
+  if (!text) {
+    alert('❌ Vui lòng nhập nội dung cần dịch');
+    return;
+  }
+
+  // Show loading state
+  button.disabled = true;
+  button.textContent = '⏳ Đang dịch...';
+
+  // Get provider and API key
+  chrome.storage.local.get(['provider', 'claudeKey', 'openaiKey', 'geminiKey', 'openaiModel', 'geminiModel', 'includeTicketContext', 'customInstruction'], (data) => {
+    const provider = data.provider || 'claude';
+    const apiKey = data[provider + 'Key'];
+    let model = '';
+
+    if (!apiKey) {
+      button.disabled = false;
+      button.textContent = '🌐 Dịch';
+      alert('❌ Please set up your API key in the extension settings');
+      return;
+    }
+
+    switch(provider) {
+      case 'openai':
+        model = data.openaiModel || 'gpt-4-turbo';
+        break;
+      case 'gemini':
+        model = data.geminiModel || 'gemini-2.5-flash';
+        break;
+    }
+
+    // Collect issue context only if enabled
+    const includeContext = data.includeTicketContext !== false;
+    const context = includeContext ? collectIssueContext() : '';
+    const langName = SUPPORTED_LANGUAGES[language];
+    const contextNote = includeContext ? ' (Use issue context as reference, but main focus is translating the selected comment)' : '';
+    const translationInstruction = `Translate to ${langName}. Only translate, do not add comments or explanations. Preserve formatting.${contextNote}`;
+
+    // Send translation request
+    chrome.runtime.sendMessage({
+      type: 'TRANSLATE_TEXT',
+      text: text,
+      provider: provider,
+      apiKey: apiKey,
+      model: model,
+      customInstruction: translationInstruction,
+      context: context
+    }, (response) => {
+      button.disabled = false;
+      button.textContent = '🌐 Dịch';
+
+      if (chrome.runtime.lastError) {
+        console.error('Chrome runtime error:', chrome.runtime.lastError);
+        alert(`❌ Translation error: ${chrome.runtime.lastError.message}`);
+        return;
+      }
+
+      if (response && response.success) {
+        displayJiraCommentTranslationPreview(response.translation, container);
+      } else if (response && response.error) {
+        alert('❌ Translation error: ' + response.error);
+      } else {
+        alert('❌ Translation error: No response from background script');
+      }
+    });
+  });
+}
+
+function displayJiraCommentTranslationPreview(translation, container) {
+  // Remove existing preview
+  const existingPreview = container.querySelector('[data-translator-jira-preview="true"]');
+  if (existingPreview) {
+    existingPreview.remove();
+  }
+
+  const formattedTranslation = formatTranslationText(translation);
+
+  const resultDiv = document.createElement('div');
+  resultDiv.setAttribute('data-translator-jira-preview', 'true');
+  resultDiv.style.cssText = `
+    background: #f9f9f9;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    padding: 12px;
+    margin: 8px 0;
+    font-size: 13px;
+    line-height: 1.6;
+  `;
+
+  resultDiv.innerHTML = `
+    <style>
+      .translator-jira-result h1 {
+        font-size: 20px;
+        font-weight: bold;
+        margin: 12px 0 8px 0;
+        border-bottom: 2px solid #667eea;
+        padding-bottom: 4px;
+      }
+      .translator-jira-result h2 {
+        font-size: 18px;
+        font-weight: bold;
+        margin: 10px 0 6px 0;
+        border-bottom: 1px solid #9ca3ff;
+        padding-bottom: 4px;
+      }
+      .translator-jira-result h3 {
+        font-size: 16px;
+        font-weight: bold;
+        margin: 8px 0 4px 0;
+      }
+      .translator-jira-result p {
+        margin: 6px 0;
+        line-height: 1.6;
+      }
+      .translator-jira-result ul, .translator-jira-result ol {
+        margin: 6px 0;
+        padding-left: 24px;
+      }
+      .translator-jira-result li {
+        margin: 3px 0;
+      }
+      .translator-jira-result code {
+        background: #f0f0f0;
+        padding: 2px 5px;
+        border-radius: 3px;
+        font-family: monospace;
+        font-size: 12px;
+      }
+      .translator-jira-result blockquote {
+        border-left: 3px solid #667eea;
+        padding-left: 10px;
+        margin-left: 0;
+        color: #555;
+        font-style: italic;
+      }
+      .translator-jira-result strong {
+        font-weight: bold;
+      }
+    </style>
+    <div style="font-weight: 600; margin-bottom: 6px; color: #667eea;">
+      📝 Bản dịch:
+      <button class="copy-trans-btn-jira" style="
+        float: right;
+        background: white;
+        border: 1px solid #667eea;
+        color: #667eea;
+        padding: 2px 8px;
+        border-radius: 3px;
+        cursor: pointer;
+        font-size: 11px;
+      ">📋 Copy</button>
+    </div>
+    <div class="translator-jira-result" style="clear: both; margin-top: 6px;">${formattedTranslation}</div>
+  `;
+
+  // Copy button handler
+  const copyBtn = resultDiv.querySelector('.copy-trans-btn-jira');
+  copyBtn.addEventListener('click', () => {
+    navigator.clipboard.writeText(translation);
+    const originalText = copyBtn.textContent;
+    copyBtn.textContent = '✅ Copied!';
+    setTimeout(() => {
+      copyBtn.textContent = originalText;
+    }, 2000);
+  });
+
+  // Insert preview above the editor
+  const editorContentArea = container.querySelector('.ak-editor-content-area');
+  if (editorContentArea) {
+    editorContentArea.parentNode.insertBefore(resultDiv, editorContentArea);
+  } else {
+    container.insertBefore(resultDiv, container.firstChild);
+  }
+}
+
 // Run on page load
 injectTranslateButtons();
 injectEditorTranslation();
 injectGitHubEditorTranslation();
 injectReviewThreadReplyTranslation();
+injectJiraCommentEditorTranslation();
 
 // Re-run when DOM changes (for infinite scroll, lazy loading, dynamic content)
 // Debounce to prevent excessive calls
@@ -1498,6 +1989,7 @@ const observer = new MutationObserver(() => {
     injectEditorTranslation();
     injectGitHubEditorTranslation();
     injectReviewThreadReplyTranslation();
+    injectJiraCommentEditorTranslation();
   }, 500); // Wait 500ms after DOM changes stop before running
 });
 

@@ -11,12 +11,13 @@ const openaiKey = document.getElementById('openaiKey');
 const openaiModel = document.getElementById('openaiModel');
 const geminiKey = document.getElementById('geminiKey');
 const geminiModel = document.getElementById('geminiModel');
+const includeTicketContext = document.getElementById('includeTicketContext');
 const customInstruction = document.getElementById('customInstruction');
 
 let currentProvider = 'claude';
 
 // Load saved settings from storage
-chrome.storage.local.get(['provider', 'claudeKey', 'openaiKey', 'openaiModel', 'geminiKey', 'geminiModel', 'customInstruction'], (data) => {
+chrome.storage.local.get(['provider', 'claudeKey', 'openaiKey', 'openaiModel', 'geminiKey', 'geminiModel', 'includeTicketContext', 'customInstruction'], (data) => {
   currentProvider = data.provider || 'claude';
   if (data.claudeKey) claudeKey.value = data.claudeKey;
   if (data.openaiKey) openaiKey.value = data.openaiKey;
@@ -24,6 +25,9 @@ chrome.storage.local.get(['provider', 'claudeKey', 'openaiKey', 'openaiModel', '
   if (data.geminiKey) geminiKey.value = data.geminiKey;
   if (data.geminiModel) geminiModel.value = data.geminiModel;
   if (data.customInstruction) customInstruction.value = data.customInstruction;
+  
+  // Load context setting (default true)
+  includeTicketContext.checked = data.includeTicketContext !== false;
   
   provider.value = currentProvider;
   updateProviderUI();
@@ -59,6 +63,7 @@ saveSettingsBtn.addEventListener('click', () => {
     openaiModel: openaiModel.value,
     geminiKey: geminiKey.value,
     geminiModel: geminiModel.value,
+    includeTicketContext: includeTicketContext.checked,
     customInstruction: customInstruction.value || ''
   };
   

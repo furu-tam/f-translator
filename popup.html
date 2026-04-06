@@ -268,6 +268,16 @@
             </div>
 
             <div class="setting-group">
+                <label style="display: flex; align-items: center; font-weight: normal; margin-bottom: 0; cursor: pointer;">
+                    <input type="checkbox" id="includeTicketContext" style="width: auto; margin-right: 8px; cursor: pointer;">
+                    <span>📎 Đưa context của ticket vào (dùng làm tham khảo khi dịch)</span>
+                </label>
+                <p style="font-size: 11px; color: #999; margin: 6px 0 0 0; line-height: 1.4;">
+                    Nếu bật: sẽ gửi toàn bộ nội dung ticket làm context để AI dịch chính xác hơn (mục tiêu chính vẫn là dịch comment được chọn)
+                </p>
+            </div>
+
+            <div class="setting-group">
                 <label for="customInstruction">Custom Instruction (Tùy chỉnh)</label>
                 <textarea id="customInstruction" placeholder="VD: Dịch sang Tiếng Việt theo phong cách chuyên môn. Giữ nguyên các từ kỹ thuật.&#10;Để trống để dùng hướng dẫn mặc định."></textarea>
             </div>
