@@ -1254,7 +1254,7 @@ function injectReviewThreadReplyTranslation() {
     translateBtn.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      translateReviewThreadReplyContent(textarea, langSelect.value, form);
+      translateReviewThreadReplyContent(textarea, langSelect.value, form, translateBtn);
     });
 
     controlsDiv.appendChild(langSelect);
@@ -1268,12 +1268,16 @@ function injectReviewThreadReplyTranslation() {
   });
 }
 
-function translateReviewThreadReplyContent(textarea, language, form) {
+function translateReviewThreadReplyContent(textarea, language, form, button) {
   const text = textarea.value.trim();
   if (!text) {
     alert('Vui lòng nhập nội dung cần dịch');
     return;
   }
+
+  // Show loading state
+  button.disabled = true;
+  button.textContent = '⏳ Đang dịch...';
 
   // Get provider and API key
   chrome.storage.local.get(['provider', 'claudeKey', 'openaiKey', 'geminiKey', 'openaiModel', 'geminiModel', 'customInstruction'], (data) => {
@@ -1282,6 +1286,8 @@ function translateReviewThreadReplyContent(textarea, language, form) {
     let model = '';
 
     if (!apiKey) {
+      button.disabled = false;
+      button.textContent = '🌐 Dịch';
       alert('Please set up your API key in the extension settings');
       return;
     }
@@ -1310,6 +1316,9 @@ function translateReviewThreadReplyContent(textarea, language, form) {
       customInstruction: translationInstruction,
       context: context
     }, (response) => {
+      button.disabled = false;
+      button.textContent = '🌐 Dịch';
+
       if (chrome.runtime.lastError) {
         console.error('Chrome runtime error:', chrome.runtime.lastError);
         alert(`Translation error: ${chrome.runtime.lastError.message}`);
