@@ -3,6 +3,37 @@
  * Runs in the context of the web page
  */
 
+// Supported languages for editor translation
+const SUPPORTED_LANGUAGES = {
+  'vi': 'Tiếng Việt',
+  'en': 'English',
+  'ja': '日本語 (Japanese)',
+  'zh': '中文 (Chinese)',
+  'ko': '한국어 (Korean)',
+  'es': 'Español (Spanish)',
+  'fr': 'Français (French)',
+  'de': 'Deutsch (German)',
+  'it': 'Italiano (Italian)',
+  'pt': 'Português (Portuguese)',
+  'ru': 'Русский (Russian)',
+  'ar': 'العربية (Arabic)',
+  'hi': 'हिन्दी (Hindi)',
+  'th': 'ไทย (Thai)',
+  'id': 'Bahasa Indonesia',
+  'my': 'မြန်မာ (Myanmar)',
+  'tl': 'Tagalog (Filipino)',
+  'tr': 'Türkçe (Turkish)',
+  'pl': 'Polski (Polish)',
+  'uk': 'Українська (Ukrainian)',
+  'el': 'Ελληνικά (Greek)',
+  'he': 'עברית (Hebrew)',
+  'nl': 'Nederlands (Dutch)',
+  'sv': 'Svenska (Swedish)',
+  'no': 'Norsk (Norwegian)',
+  'da': 'Dansk (Danish)',
+  'fi': 'Suomi (Finnish)'
+};
+
 // Inject translate button into all comments and ticket description
 function injectTranslateButtons() {
   // Find all content elements for both Backlog and GitHub/Git platforms
@@ -182,10 +213,18 @@ async function translateComment(contentEl, text, button) {
         button.disabled = false;
         button.innerHTML = '🌐 Dịch';
 
+        if (chrome.runtime.lastError) {
+          console.error('Chrome runtime error:', chrome.runtime.lastError);
+          showErr(contentEl, `❌ Lỗi: ${chrome.runtime.lastError.message}`);
+          return;
+        }
+
         if (response && response.success) {
           displayTranslation(contentEl, text, response.translation);
+        } else if (response && response.error) {
+          showErr(contentEl, `❌ Lỗi: ${response.error}`);
         } else {
-          showErr(contentEl, `❌ Lỗi: ${response?.error || 'Unknown error'}`);
+          showErr(contentEl, `❌ Lỗi: No response from background script`);
         }
       }
     );
@@ -453,12 +492,1004 @@ function escapeHtml(text) {
   return div.innerHTML;
 }
 
+// Inject editor translation feature for Backlog
+function injectEditorTranslation() {
+  const editor = document.getElementById('switchStatusAddCommentForm');
+  if (!editor) return;
+
+  // Skip if already injected
+  if (editor.querySelector('.translator-lang-selector')) {
+    return;
+  }
+
+  const inputWrapper = editor.querySelector('.comment-editor__input-wrapper');
+  
+  if (!inputWrapper) return;
+
+  // Create container for language selector and translate button
+  const container = document.createElement('div');
+  container.className = 'translator-editor-container';
+  container.style.cssText = `
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 0;
+    margin-top: 12px;
+    border-top: 1px solid #f0f0f0;
+  `;
+
+  // Language dropdown
+  const langSelect = document.createElement('select');
+  langSelect.className = 'translator-lang-selector';
+  langSelect.style.cssText = `
+    padding: 8px 10px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 13px;
+    cursor: pointer;
+    background-color: white;
+    height: 36px;
+    min-width: 200px;
+  `;
+
+  const defaultOption = document.createElement('option');
+  defaultOption.value = '';
+  defaultOption.textContent = '📖 Chọn ngôn ngữ...';
+  langSelect.appendChild(defaultOption);
+
+  Object.entries(SUPPORTED_LANGUAGES).forEach(([code, name]) => {
+    const option = document.createElement('option');
+    option.value = code;
+    option.textContent = name;
+    langSelect.appendChild(option);
+  });
+
+  // Set default language to Japanese
+  langSelect.value = 'ja';
+
+  // Translate button
+  const translateBtn = document.createElement('button');
+  translateBtn.type = 'button';
+  translateBtn.className = 'translator-editor-btn';
+  translateBtn.innerHTML = '🌐 Dịch';
+  translateBtn.style.cssText = `
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    transition: all 0.3s ease;
+    white-space: nowrap;
+    height: 36px;
+  `;
+
+  translateBtn.addEventListener('mouseover', () => {
+    translateBtn.style.transform = 'translateY(-2px)';
+    translateBtn.style.boxShadow = '0 4px 12px rgba(102, 126, 234, 0.4)';
+  });
+
+  translateBtn.addEventListener('mouseout', () => {
+    translateBtn.style.transform = 'translateY(0)';
+    translateBtn.style.boxShadow = 'none';
+  });
+
+  translateBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    const selectedLang = langSelect.value;
+    if (!selectedLang) {
+      alert('❌ Vui lòng chọn ngôn ngữ');
+      return;
+    }
+    translateEditorContent(selectedLang, translateBtn);
+  });
+
+  container.appendChild(langSelect);
+  container.appendChild(translateBtn);
+
+  // Insert after input-wrapper
+  inputWrapper.parentNode.insertBefore(container, inputWrapper.nextSibling);
+}
+
+// Translate editor content
+function translateEditorContent(targetLang, button) {
+  const editor = document.getElementById('switchStatusAddCommentForm');
+  const contentEl = editor.querySelector('[data-testid="textEditor"]');
+  
+  if (!contentEl) {
+    alert('❌ Không tìm thấy editor');
+    return;
+  }
+
+  // Get text from contenteditable div
+  const text = contentEl.innerText?.trim();
+  if (!text || text.length < 5) {
+    alert('❌ Vui lòng nhập nội dung để dịch');
+    return;
+  }
+
+  button.disabled = true;
+  button.innerHTML = '⏳ Dịch...';
+
+  // Get settings
+  chrome.storage.local.get(['provider', 'claudeKey', 'openaiKey', 'openaiModel', 'geminiKey', 'geminiModel', 'customInstruction'], (data) => {
+    const provider = data.provider || 'claude';
+    let apiKey = '';
+    let model = '';
+    
+    switch(provider) {
+      case 'openai': 
+        apiKey = data.openaiKey; 
+        model = data.openaiModel || 'gpt-4-turbo';
+        break;
+      case 'gemini': 
+        apiKey = data.geminiKey; 
+        model = data.geminiModel || 'gemini-2.5-flash';
+        break;
+      default: apiKey = data.claudeKey;
+    }
+
+    if (!apiKey) {
+      alert(`❌ Vui lòng cài đặt API key cho ${provider}`);
+      button.disabled = false;
+      button.innerHTML = '🌐 Dịch';
+      return;
+    }
+
+    // Collect full issue context
+    const context = collectIssueContext();
+    const langName = SUPPORTED_LANGUAGES[targetLang];
+    const translationInstruction = `Translate to ${langName}. Only translate, do not add comments or explanations. Preserve formatting.`;
+
+    // Send to background script
+    chrome.runtime.sendMessage(
+      {
+        type: 'TRANSLATE_TEXT',
+        text: text,
+        provider: provider,
+        apiKey: apiKey,
+        model: model,
+        customInstruction: translationInstruction,
+        context: context
+      },
+      (response) => {
+        button.disabled = false;
+        button.innerHTML = '🌐 Dịch';
+
+        if (chrome.runtime.lastError) {
+          console.error('Chrome runtime error:', chrome.runtime.lastError);
+          alert(`❌ Lỗi: ${chrome.runtime.lastError.message}`);
+          return;
+        }
+
+        if (response && response.success) {
+          // Display translation as preview using the editor form as container
+          displayEditorTranslationPreview(editor, text, response.translation);
+        } else if (response && response.error) {
+          alert(`❌ Lỗi: ${response.error}`);
+        } else {
+          alert(`❌ Lỗi: No response from background script`);
+        }
+      }
+    );
+  });
+}
+
+// Display translation preview for editor content
+function displayEditorTranslationPreview(editor, original, translation) {
+  // Remove existing preview if any
+  const existing = editor.querySelector('.translator-editor-result');
+  if (existing) {
+    existing.remove();
+  }
+
+  // Format translation text to HTML
+  const formattedTranslation = formatTranslationText(translation);
+
+  const resultDiv = document.createElement('div');
+  resultDiv.className = 'translator-editor-result';
+  resultDiv.style.cssText = `
+    background-color: #e8f5e9;
+    border-left: 4px solid #4caf50;
+    padding: 12px;
+    margin-top: 12px;
+    border-radius: 4px;
+    font-size: 13px;
+    color: #2e7d32;
+  `;
+
+  resultDiv.innerHTML = `
+    <style>
+      .translator-editor-result h1 {
+        font-size: 24px;
+        font-weight: bold;
+        margin: 16px 0 8px 0;
+        border-bottom: 2px solid #4caf50;
+        padding-bottom: 4px;
+      }
+      .translator-editor-result h2 {
+        font-size: 20px;
+        font-weight: bold;
+        margin: 14px 0 8px 0;
+        border-bottom: 1px solid #81c784;
+        padding-bottom: 4px;
+      }
+      .translator-editor-result h3 {
+        font-size: 18px;
+        font-weight: bold;
+        margin: 12px 0 6px 0;
+      }
+      .translator-editor-result h4,
+      .translator-editor-result h5,
+      .translator-editor-result h6 {
+        font-size: 16px;
+        font-weight: bold;
+        margin: 10px 0 4px 0;
+      }
+      .translator-editor-result p {
+        margin: 8px 0;
+        line-height: 1.6;
+      }
+      .translator-editor-result ul,
+      .translator-editor-result ol {
+        margin: 8px 0;
+        padding-left: 24px;
+      }
+      .translator-editor-result li {
+        margin: 4px 0;
+        line-height: 1.6;
+      }
+      .translator-editor-result a {
+        color: #1976d2;
+        text-decoration: underline;
+      }
+      .translator-editor-result a:hover {
+        color: #1565c0;
+      }
+      .translator-editor-result code {
+        background: rgba(0,0,0,0.08);
+        padding: 2px 6px;
+        border-radius: 3px;
+        font-family: monospace;
+        font-size: 12px;
+      }
+      .translator-editor-result pre {
+        background: rgba(0,0,0,0.08);
+        padding: 8px;
+        border-radius: 3px;
+        overflow-x: auto;
+        font-family: monospace;
+        font-size: 12px;
+      }
+      .translator-editor-result blockquote {
+        border-left: 4px solid #81c784;
+        padding-left: 12px;
+        margin-left: 0;
+        color: #558b2f;
+        font-style: italic;
+      }
+      .translator-editor-result strong,
+      .translator-editor-result b {
+        font-weight: bold;
+        color: #1b5e20;
+      }
+      .translator-editor-result em,
+      .translator-editor-result i {
+        font-style: italic;
+      }
+      .translator-editor-result table {
+        border-collapse: collapse;
+        width: 100%;
+        margin: 8px 0;
+      }
+      .translator-editor-result table th,
+      .translator-editor-result table td {
+        border: 1px solid #81c784;
+        padding: 8px;
+        text-align: left;
+      }
+      .translator-editor-result table th {
+        background: rgba(76, 175, 80, 0.1);
+        font-weight: bold;
+      }
+    </style>
+    <div style="font-weight: 600; margin-bottom: 6px;">📝 Bản dịch:
+      <button class="copy-trans-btn-editor" style="
+        float: right;
+        background: white;
+        border: 1px solid #4caf50;
+        color: #4caf50;
+        padding: 2px 8px;
+        border-radius: 3px;
+        cursor: pointer;
+        font-size: 11px;
+      ">📋 Copy</button>
+    </div>
+    <div style="clear: both; margin-top: 6px;">${formattedTranslation}</div>
+  `;
+
+  // Copy button handler
+  resultDiv.querySelector('.copy-trans-btn-editor').addEventListener('click', () => {
+    navigator.clipboard.writeText(translation);
+    const btn = resultDiv.querySelector('.copy-trans-btn-editor');
+    const originalText = btn.textContent;
+    btn.textContent = '✅ Copied!';
+    setTimeout(() => {
+      btn.textContent = originalText;
+    }, 2000);
+  });
+
+  // Insert preview above input wrapper
+  const inputWrapper = editor.querySelector('.comment-editor__input-wrapper');
+  if (inputWrapper) {
+    inputWrapper.parentNode.insertBefore(resultDiv, inputWrapper);
+  } else {
+    // Fallback: append to edit area
+    const editArea = editor.querySelector('.comment-editor__edit-area');
+    if (editArea) {
+      editArea.appendChild(resultDiv);
+    }
+  }
+}
+
+// Inject editor translation feature for GitHub
+function injectGitHubEditorTranslation() {
+  // Find GitHub comment composer textarea
+  const textarea = document.querySelector('textarea[placeholder*="comment" i]');
+  if (!textarea) return;
+
+  // Find the closest comment composer wrapper
+  const composerContainer = textarea.closest('.IssueCommentComposer-module__commentBoxWrapper__W0nBE, [class*="CommentBox"]');
+  if (!composerContainer) return;
+
+  // Skip if already injected
+  if (composerContainer.querySelector('.translator-github-lang-selector')) {
+    return;
+  }
+
+  // Find the footer or toolbar area to inject language selector
+  const footer = composerContainer.querySelector('.Footer-module__footer__asFN1, [class*="Footer"]');
+  const toolbar = composerContainer.querySelector('.Toolbar-module__toolbar__oK14P, [class*="Toolbar"]');
+  const insertionPoint = footer || toolbar;
+
+  if (!insertionPoint) return;
+
+  // Create container for language selector and translate button
+  const container = document.createElement('div');
+  container.className = 'translator-github-editor-container';
+  container.style.cssText = `
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-top: 1px solid #e1e4e8;
+    background-color: #fafbfc;
+    margin-top: 8px;
+  `;
+
+  // Language dropdown
+  const langSelect = document.createElement('select');
+  langSelect.className = 'translator-github-lang-selector';
+  langSelect.style.cssText = `
+    padding: 8px 10px;
+    border: 1px solid #e1e4e8;
+    border-radius: 6px;
+    font-size: 13px;
+    cursor: pointer;
+    background-color: white;
+    height: 36px;
+    min-width: 200px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  `;
+
+  const defaultOption = document.createElement('option');
+  defaultOption.value = '';
+  defaultOption.textContent = '📖 Choose language...';
+  langSelect.appendChild(defaultOption);
+
+  Object.entries(SUPPORTED_LANGUAGES).forEach(([code, name]) => {
+    const option = document.createElement('option');
+    option.value = code;
+    option.textContent = name;
+    langSelect.appendChild(option);
+  });
+
+  // Set default to Japanese
+  langSelect.value = 'ja';
+
+  // Translate button
+  const translateBtn = document.createElement('button');
+  translateBtn.type = 'button';
+  translateBtn.className = 'translator-github-editor-btn';
+  translateBtn.innerHTML = '🌐 Translate';
+  translateBtn.style.cssText = `
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    transition: all 0.3s ease;
+    white-space: nowrap;
+    height: 36px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  `;
+
+  translateBtn.addEventListener('mouseover', () => {
+    translateBtn.style.transform = 'translateY(-2px)';
+    translateBtn.style.boxShadow = '0 4px 12px rgba(102, 126, 234, 0.4)';
+  });
+
+  translateBtn.addEventListener('mouseout', () => {
+    translateBtn.style.transform = 'translateY(0)';
+    translateBtn.style.boxShadow = 'none';
+  });
+
+  translateBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    const selectedLang = langSelect.value;
+    if (!selectedLang) {
+      alert('❌ Please select a language');
+      return;
+    }
+    translateGitHubEditorContent(selectedLang, translateBtn, textarea, composerContainer);
+  });
+
+  container.appendChild(langSelect);
+  container.appendChild(translateBtn);
+
+  // Insert after toolbar or at the beginning of footer
+  if (toolbar) {
+    toolbar.parentNode.insertBefore(container, toolbar.nextSibling);
+  } else if (footer) {
+    footer.parentNode.insertBefore(container, footer);
+  }
+}
+
+// Translate GitHub editor content
+function translateGitHubEditorContent(targetLang, button, textarea, composerContainer) {
+  const text = textarea.value?.trim();
+  
+  if (!text || text.length < 5) {
+    alert('❌ Please enter content to translate');
+    return;
+  }
+
+  button.disabled = true;
+  button.innerHTML = '⏳ Translating...';
+
+  // Get settings
+  chrome.storage.local.get(['provider', 'claudeKey', 'openaiKey', 'openaiModel', 'geminiKey', 'geminiModel', 'customInstruction'], (data) => {
+    const provider = data.provider || 'claude';
+    let apiKey = '';
+    let model = '';
+    
+    switch(provider) {
+      case 'openai': 
+        apiKey = data.openaiKey; 
+        model = data.openaiModel || 'gpt-4-turbo';
+        break;
+      case 'gemini': 
+        apiKey = data.geminiKey; 
+        model = data.geminiModel || 'gemini-2.5-flash';
+        break;
+      default: apiKey = data.claudeKey;
+    }
+
+    if (!apiKey) {
+      alert(`❌ Please set API key for ${provider}`);
+      button.disabled = false;
+      button.innerHTML = '🌐 Translate';
+      return;
+    }
+
+    // Collect full issue context
+    const context = collectIssueContext();
+    const langName = SUPPORTED_LANGUAGES[targetLang];
+    const translationInstruction = `Translate to ${langName}. Only translate, do not add comments or explanations. Preserve formatting.`;
+
+    // Send to background script
+    chrome.runtime.sendMessage(
+      {
+        type: 'TRANSLATE_TEXT',
+        text: text,
+        provider: provider,
+        apiKey: apiKey,
+        model: model,
+        customInstruction: translationInstruction,
+        context: context
+      },
+      (response) => {
+        button.disabled = false;
+        button.innerHTML = '🌐 Translate';
+
+        if (chrome.runtime.lastError) {
+          console.error('Chrome runtime error:', chrome.runtime.lastError);
+          alert(`❌ Error: ${chrome.runtime.lastError.message}`);
+          return;
+        }
+
+        if (response && response.success) {
+          // Display translation as preview
+          displayGitHubEditorTranslationPreview(composerContainer, text, response.translation);
+        } else if (response && response.error) {
+          alert(`❌ Error: ${response.error}`);
+        } else {
+          alert(`❌ Error: No response from background script`);
+        }
+      }
+    );
+  });
+}
+
+// Display translation preview for GitHub editor
+function displayGitHubEditorTranslationPreview(composerContainer, original, translation) {
+  // Remove existing preview if any
+  const existing = composerContainer.querySelector('.translator-github-editor-result');
+  if (existing) {
+    existing.remove();
+  }
+
+  // Format translation text to HTML
+  const formattedTranslation = formatTranslationText(translation);
+
+  const resultDiv = document.createElement('div');
+  resultDiv.className = 'translator-github-editor-result';
+  resultDiv.style.cssText = `
+    background-color: #f6f8fa;
+    border: 1px solid #e1e4e8;
+    border-left: 4px solid #28a745;
+    padding: 12px;
+    margin: 12px;
+    border-radius: 6px;
+    font-size: 13px;
+    color: #28a745;
+  `;
+
+  resultDiv.innerHTML = `
+    <style>
+      .translator-github-editor-result h1 {
+        font-size: 24px;
+        font-weight: bold;
+        margin: 16px 0 8px 0;
+        border-bottom: 2px solid #28a745;
+        padding-bottom: 4px;
+      }
+      .translator-github-editor-result h2 {
+        font-size: 20px;
+        font-weight: bold;
+        margin: 14px 0 8px 0;
+        border-bottom: 1px solid #85e89d;
+        padding-bottom: 4px;
+      }
+      .translator-github-editor-result h3 {
+        font-size: 18px;
+        font-weight: bold;
+        margin: 12px 0 6px 0;
+      }
+      .translator-github-editor-result h4,
+      .translator-github-editor-result h5,
+      .translator-github-editor-result h6 {
+        font-size: 16px;
+        font-weight: bold;
+        margin: 10px 0 4px 0;
+      }
+      .translator-github-editor-result p {
+        margin: 8px 0;
+        line-height: 1.6;
+      }
+      .translator-github-editor-result ul,
+      .translator-github-editor-result ol {
+        margin: 8px 0;
+        padding-left: 24px;
+      }
+      .translator-github-editor-result li {
+        margin: 4px 0;
+        line-height: 1.6;
+      }
+      .translator-github-editor-result a {
+        color: #0366d6;
+        text-decoration: underline;
+      }
+      .translator-github-editor-result a:hover {
+        color: #0256c7;
+      }
+      .translator-github-editor-result code {
+        background: #f6f8fa;
+        padding: 2px 6px;
+        border-radius: 3px;
+        font-family: monospace;
+        font-size: 12px;
+      }
+      .translator-github-editor-result pre {
+        background: #f6f8fa;
+        padding: 8px;
+        border-radius: 6px;
+        overflow-x: auto;
+        font-family: monospace;
+        font-size: 12px;
+      }
+      .translator-github-editor-result blockquote {
+        border-left: 4px solid #d0d0d0;
+        padding-left: 12px;
+        margin-left: 0;
+        color: #666;
+        font-style: italic;
+      }
+      .translator-github-editor-result strong,
+      .translator-github-editor-result b {
+        font-weight: bold;
+      }
+      .translator-github-editor-result em,
+      .translator-github-editor-result i {
+        font-style: italic;
+      }
+      .translator-github-editor-result table {
+        border-collapse: collapse;
+        width: 100%;
+        margin: 8px 0;
+      }
+      .translator-github-editor-result table th,
+      .translator-github-editor-result table td {
+        border: 1px solid #e1e4e8;
+        padding: 8px;
+        text-align: left;
+      }
+      .translator-github-editor-result table th {
+        background: #f6f8fa;
+        font-weight: bold;
+      }
+    </style>
+    <div style="font-weight: 600; margin-bottom: 6px; color: #28a745;">📝 Translation:
+      <button class="copy-trans-btn-github" style="
+        float: right;
+        background: white;
+        border: 1px solid #28a745;
+        color: #28a745;
+        padding: 2px 8px;
+        border-radius: 3px;
+        cursor: pointer;
+        font-size: 11px;
+      ">📋 Copy</button>
+    </div>
+    <div style="clear: both; margin-top: 6px; color: #24292e;">${formattedTranslation}</div>
+  `;
+
+  // Copy button handler
+  resultDiv.querySelector('.copy-trans-btn-github').addEventListener('click', () => {
+    navigator.clipboard.writeText(translation);
+    const btn = resultDiv.querySelector('.copy-trans-btn-github');
+    const originalText = btn.textContent;
+    btn.textContent = '✅ Copied!';
+    setTimeout(() => {
+      btn.textContent = originalText;
+    }, 2000);
+  });
+
+  // Insert preview at the beginning of composer container
+  const inputWrapper = composerContainer.querySelector('.MarkdownEditor-module__inputWrapper__i5oSw, [class*="inputWrapper"]');
+  if (inputWrapper) {
+    inputWrapper.parentNode.insertBefore(resultDiv, inputWrapper);
+  } else {
+    composerContainer.insertBefore(resultDiv, composerContainer.firstChild);
+  }
+}
+
+// GitHub Review Thread Reply Translation
+function injectReviewThreadReplyTranslation() {
+  // More specific selector for reply textareas in review threads
+  const replyTextareas = document.querySelectorAll('.review-thread-reply .inline-comment-form-box textarea');
+  
+  replyTextareas.forEach(textarea => {
+    // Check if already injected using data attribute
+    if (textarea.dataset.translatorInjected === 'true') {
+      return;
+    }
+
+    const container = textarea.closest('.inline-comment-form-box');
+    if (!container) return;
+
+    // Find the form that contains this textarea
+    const form = textarea.closest('form');
+    if (!form) return;
+
+    // Create language selector and button container
+    const controlsDiv = document.createElement('div');
+    controlsDiv.className = 'translator-review-thread-controls';
+    controlsDiv.setAttribute('data-translator-review-controls', 'true');
+    controlsDiv.style.cssText = `
+      display: flex;
+      gap: 8px;
+      margin-bottom: 8px;
+      padding: 8px;
+      background: #f6f8fa;
+      border-radius: 6px;
+      border: 1px solid #e1e4e8;
+    `;
+
+    // Language selector
+    const langSelect = document.createElement('select');
+    langSelect.className = 'translator-lang-select-review';
+    langSelect.style.cssText = `
+      padding: 6px 8px;
+      border: 1px solid #e1e4e8;
+      border-radius: 4px;
+      background: white;
+      font-size: 12px;
+      flex: 1;
+      max-width: 200px;
+    `;
+
+    // Add language options
+    Object.entries(SUPPORTED_LANGUAGES).forEach(([code, name]) => {
+      const option = document.createElement('option');
+      option.value = code;
+      option.textContent = name;
+      langSelect.appendChild(option);
+    });
+
+    langSelect.value = 'ja'; // Set default to Japanese
+
+    // Translate button
+    const translateBtn = document.createElement('button');
+    translateBtn.type = 'button'; // Prevent form submission
+    translateBtn.textContent = '🌐 Dịch';
+    translateBtn.style.cssText = `
+      background: linear-gradient(135deg, #28a745 0%, #239a3b 100%);
+      color: white;
+      border: none;
+      padding: 6px 12px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+      transition: 0.3s;
+      white-space: nowrap;
+    `;
+
+    translateBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      translateReviewThreadReplyContent(textarea, langSelect.value, form);
+    });
+
+    controlsDiv.appendChild(langSelect);
+    controlsDiv.appendChild(translateBtn);
+
+    // Insert controls before the form (at the top of the reply section)
+    form.parentNode.insertBefore(controlsDiv, form);
+
+    // Mark as injected
+    textarea.dataset.translatorInjected = 'true';
+  });
+}
+
+function translateReviewThreadReplyContent(textarea, language, form) {
+  const text = textarea.value.trim();
+  if (!text) {
+    alert('Vui lòng nhập nội dung cần dịch');
+    return;
+  }
+
+  // Get provider and API key
+  chrome.storage.local.get(['provider', 'claudeKey', 'openaiKey', 'geminiKey', 'openaiModel', 'geminiModel', 'customInstruction'], (data) => {
+    const provider = data.provider || 'claude';
+    const apiKey = data[provider + 'Key'];
+    let model = '';
+
+    if (!apiKey) {
+      alert('Please set up your API key in the extension settings');
+      return;
+    }
+
+    switch(provider) {
+      case 'openai':
+        model = data.openaiModel || 'gpt-4-turbo';
+        break;
+      case 'gemini':
+        model = data.geminiModel || 'gemini-2.5-flash';
+        break;
+    }
+
+    // Collect issue context
+    const context = collectIssueContext();
+    const langName = SUPPORTED_LANGUAGES[language];
+    const translationInstruction = `Translate to ${langName}. Only translate, do not add comments or explanations. Preserve formatting.`;
+
+    // Send translation request using correct message format
+    chrome.runtime.sendMessage({
+      type: 'TRANSLATE_TEXT',
+      text: text,
+      provider: provider,
+      apiKey: apiKey,
+      model: model,
+      customInstruction: translationInstruction,
+      context: context
+    }, (response) => {
+      if (chrome.runtime.lastError) {
+        console.error('Chrome runtime error:', chrome.runtime.lastError);
+        alert(`Translation error: ${chrome.runtime.lastError.message}`);
+        return;
+      }
+
+      if (response && response.success) {
+        displayReviewThreadReplyTranslationPreview(response.translation, form);
+      } else if (response && response.error) {
+        alert('Translation error: ' + response.error);
+      } else {
+        alert('Translation error: No response from background script');
+      }
+    });
+  });
+}
+
+function displayReviewThreadReplyTranslationPreview(translation, form) {
+  // Remove existing preview if any
+  const existingPreview = form.parentNode.querySelector('[data-translator-review-preview="true"]');
+  if (existingPreview) {
+    existingPreview.remove();
+  }
+
+  const formattedTranslation = formatTranslationText(translation);
+
+  const resultDiv = document.createElement('div');
+  resultDiv.setAttribute('data-translator-review-preview', 'true');
+  resultDiv.style.cssText = `
+    margin-bottom: 8px;
+    padding: 12px;
+    background: #f6f8fa;
+    border: 2px solid #28a745;
+    border-radius: 6px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-size: 13px;
+    color: #28a745;
+  `;
+
+  resultDiv.innerHTML = `
+    <style>
+      .translator-review-reply-result h1 {
+        font-size: 24px;
+        font-weight: bold;
+        margin: 16px 0 8px 0;
+        border-bottom: 2px solid #28a745;
+        padding-bottom: 4px;
+      }
+      .translator-review-reply-result h2 {
+        font-size: 20px;
+        font-weight: bold;
+        margin: 14px 0 8px 0;
+        border-bottom: 1px solid #85e89d;
+        padding-bottom: 4px;
+      }
+      .translator-review-reply-result h3 {
+        font-size: 18px;
+        font-weight: bold;
+        margin: 12px 0 6px 0;
+      }
+      .translator-review-reply-result h4,
+      .translator-review-reply-result h5,
+      .translator-review-reply-result h6 {
+        font-size: 16px;
+        font-weight: bold;
+        margin: 10px 0 4px 0;
+      }
+      .translator-review-reply-result p {
+        margin: 8px 0;
+        line-height: 1.6;
+      }
+      .translator-review-reply-result ul,
+      .translator-review-reply-result ol {
+        margin: 8px 0;
+        padding-left: 24px;
+      }
+      .translator-review-reply-result li {
+        margin: 4px 0;
+        line-height: 1.6;
+      }
+      .translator-review-reply-result a {
+        color: #0366d6;
+        text-decoration: underline;
+      }
+      .translator-review-reply-result a:hover {
+        color: #0256c7;
+      }
+      .translator-review-reply-result code {
+        background: #f6f8fa;
+        padding: 2px 6px;
+        border-radius: 3px;
+        font-family: monospace;
+        font-size: 12px;
+      }
+      .translator-review-reply-result pre {
+        background: #f6f8fa;
+        padding: 8px;
+        border-radius: 6px;
+        overflow-x: auto;
+        font-family: monospace;
+        font-size: 12px;
+      }
+      .translator-review-reply-result blockquote {
+        border-left: 4px solid #d0d0d0;
+        padding-left: 12px;
+        margin-left: 0;
+        color: #666;
+        font-style: italic;
+      }
+      .translator-review-reply-result strong,
+      .translator-review-reply-result b {
+        font-weight: bold;
+      }
+      .translator-review-reply-result em,
+      .translator-review-reply-result i {
+        font-style: italic;
+      }
+      .translator-review-reply-result table {
+        border-collapse: collapse;
+        width: 100%;
+        margin: 8px 0;
+      }
+      .translator-review-reply-result table th,
+      .translator-review-reply-result table td {
+        border: 1px solid #e1e4e8;
+        padding: 8px;
+        text-align: left;
+      }
+      .translator-review-reply-result table th {
+        background: #f6f8fa;
+        font-weight: bold;
+      }
+    </style>
+    <div style="font-weight: 600; margin-bottom: 6px; color: #28a745;">📝 Translation:
+      <button class="copy-trans-btn-review" style="
+        float: right;
+        background: white;
+        border: 1px solid #28a745;
+        color: #28a745;
+        padding: 2px 8px;
+        border-radius: 3px;
+        cursor: pointer;
+        font-size: 11px;
+      ">📋 Copy</button>
+    </div>
+    <div class="translator-review-reply-result" style="clear: both; margin-top: 6px; color: #24292e;">${formattedTranslation}</div>
+  `;
+
+  // Copy button handler
+  resultDiv.querySelector('.copy-trans-btn-review').addEventListener('click', () => {
+    navigator.clipboard.writeText(translation);
+    const btn = resultDiv.querySelector('.copy-trans-btn-review');
+    const originalText = btn.textContent;
+    btn.textContent = '✅ Copied!';
+    setTimeout(() => {
+      btn.textContent = originalText;
+    }, 2000);
+  });
+
+  // Insert preview before the form (above the reply area)
+  form.parentNode.insertBefore(resultDiv, form);
+}
+
 // Run on page load
 injectTranslateButtons();
+injectEditorTranslation();
+injectGitHubEditorTranslation();
+injectReviewThreadReplyTranslation();
 
 // Re-run when DOM changes (for infinite scroll, lazy loading, dynamic content)
+// Debounce to prevent excessive calls
+let observerTimeout;
 const observer = new MutationObserver(() => {
-  injectTranslateButtons();
+  clearTimeout(observerTimeout);
+  observerTimeout = setTimeout(() => {
+    injectTranslateButtons();
+    injectEditorTranslation();
+    injectGitHubEditorTranslation();
+    injectReviewThreadReplyTranslation();
+  }, 500); // Wait 500ms after DOM changes stop before running
 });
 
 observer.observe(document.body, {
