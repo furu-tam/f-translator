@@ -47,6 +47,9 @@ function injectTranslateButtons() {
   
   // Handle ticket descriptions
   injectTicketDescriptionTranslateButton();
+  
+  // Handle Google Sheets
+  injectGoogleSheetsTranslation();
 }
 
 // Inject translate buttons for Backlog comments (1 button per comment item)
@@ -313,6 +316,318 @@ function injectTicketDescriptionTranslateButton() {
   } else {
     ticketDesc.appendChild(button);
   }
+}
+
+// Google Sheets translation with popover
+let googleSheetsPopoverInitialized = false;
+
+function injectGoogleSheetsTranslation() {
+  // Check if already initialized
+  if (googleSheetsPopoverInitialized) {
+    return;
+  }
+  
+  // Detect Google Sheets
+  if (!document.querySelector('[data-spreadsheet-id]') && !document.querySelector('.grid-container')) {
+    console.log('[GS] Google Sheets not detected - not initializing');
+    return;
+  }
+  
+  console.log('[GS] Google Sheets detected - initializing translation popover');
+  
+  googleSheetsPopoverInitialized = true;
+  
+  // Create popover element (hidden by default)
+  const popover = document.createElement('div');
+  popover.id = 'translator-gs-popover';
+  popover.style.cssText = `
+    position: fixed;
+    background: white;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    padding: 12px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    z-index: 10000;
+    display: none;
+    width: 300px;
+    max-width: 90vw;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-size: 13px;
+  `;
+  
+  popover.innerHTML = `
+    <div style="display: flex; gap: 8px; margin-bottom: 10px;">
+      <select id="translator-gs-lang" style="flex: 1; padding: 6px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px;">
+        <option value="">📖 Choose language...</option>
+      </select>
+      <button id="translator-gs-btn" style="
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border: none;
+        padding: 6px 12px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 12px;
+        font-weight: 600;
+        white-space: nowrap;
+      ">🌐 Dịch</button>
+      <button id="translator-gs-close" style="
+        background: transparent;
+        color: #999;
+        border: none;
+        cursor: pointer;
+        font-size: 16px;
+        padding: 0 4px;
+      ">✕</button>
+    </div>
+    <div id="translator-gs-result" style="
+      background: #f5f5f5;
+      border-radius: 4px;
+      padding: 8px;
+      min-height: 40px;
+      display: none;
+      max-height: 200px;
+      overflow-y: auto;
+    "></div>
+  `;
+  
+  document.body.appendChild(popover);
+  
+  // Populate language options
+  const langSelect = popover.querySelector('#translator-gs-lang');
+  Object.entries(SUPPORTED_LANGUAGES).forEach(([code, name]) => {
+    const option = document.createElement('option');
+    option.value = code;
+    option.textContent = name;
+    langSelect.appendChild(option);
+  });
+  langSelect.value = 'ja'; // Default to Japanese
+  
+  // Track current cell content
+  let currentCellContent = '';
+  let lastInputValue = '';
+  
+  // Function to find and monitor cell content from formula bar or contenteditable elements
+  const getCellContent = () => {
+    // Try multiple ways to get the current cell content
+    
+    // Method 1: Look for formula bar input
+    let formulaBar = document.querySelector('[data-is-formula]') ||
+                     document.querySelector('[role="textbox"][aria-label*="Formula"]') ||
+                     document.querySelector('input[aria-label*="formula"]') ||
+                     document.querySelector('[data-formula-bar]');
+    
+    if (formulaBar) {
+      const content = formulaBar.value || formulaBar.innerText || formulaBar.textContent || '';
+      console.log('[GS] Found formula bar with method 1:', content?.substring(0, 50));
+      return content;
+    }
+    
+    // Method 2: Look for contenteditable div in toolbar area
+    const editableArea = document.querySelector('[contenteditable="true"][role="textbox"]');
+    if (editableArea && editableArea.innerText) {
+      const content = editableArea.innerText.trim();
+      console.log('[GS] Found editable area with method 2:', content?.substring(0, 50));
+      return content;
+    }
+    
+    // Method 3: Search for input fields in the top toolbar that might show cell value
+    const inputs = document.querySelectorAll('input[type="text"], input:not([type]), [contenteditable="true"]');
+    for (let input of inputs) {
+      const content = input.value || input.innerText || input.textContent || '';
+      if (content && content.length > 0 && content.length < 5000) {
+        // Check if it looks like cell content (not too short, not too long)
+        if (content.length >= 1) {
+          console.log('[GS] Found input with method 3:', content?.substring(0, 50));
+          return content.trim();
+        }
+      }
+    }
+    
+    console.log('[GS] No cell content found');
+    return '';
+  };
+  
+  // Monitor for cell selection changes
+  const monitorCellContent = () => {
+    const content = getCellContent();
+    
+    if (content && content !== lastInputValue && content.length > 0) {
+      lastInputValue = content;
+      currentCellContent = content;
+      
+      // Find a good position for the popover
+      const gridContainer = document.querySelector('.grid-container');
+      const rect = gridContainer?.getBoundingClientRect() || { top: 100, left: 100 };
+      
+      popover.style.top = (rect.top + 150) + 'px';
+      popover.style.left = Math.min(rect.left + 50, window.innerWidth - 320) + 'px';
+      
+      // Reset result display
+      popover.querySelector('#translator-gs-result').innerHTML = `📝 Content: ${content.substring(0, 100)}${content.length > 100 ? '...' : ''}`;
+      popover.querySelector('#translator-gs-result').style.display = 'block';
+      
+      // Show popover
+      popover.style.display = 'block';
+    }
+  };
+  
+  // Listen for keyboard events (arrow keys navigate cells)
+  document.addEventListener('keydown', (e) => {
+    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter', 'Tab'].includes(e.key)) {
+      setTimeout(monitorCellContent, 100);
+    }
+  });
+  
+  // Listen for click events on the grid
+  document.addEventListener('click', (e) => {
+    // Check if clicking inside grid container
+    if (e.target.closest('.grid-container') || e.target.closest('[data-spreadsheet-id]')) {
+      setTimeout(monitorCellContent, 50);
+    }
+  }, true);
+  
+  // Monitor input changes in any input fields or contenteditable areas
+  document.addEventListener('input', () => {
+    monitorCellContent();
+  }, true);
+  
+  // Use MutationObserver to watch for changes in the document
+  const observer = new MutationObserver(() => {
+    monitorCellContent();
+  });
+  
+  observer.observe(document.body, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    characterData: true,
+    attributeFilter: ['aria-label', 'data-value', 'value'],
+    characterDataOldValue: false
+  });
+  
+  // Close button
+  popover.querySelector('#translator-gs-close').addEventListener('click', () => {
+    popover.style.display = 'none';
+    currentCellContent = '';
+    lastInputValue = '';
+  });
+  
+  // Translate button
+  const translateBtn = popover.querySelector('#translator-gs-btn');
+  translateBtn.addEventListener('click', async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    if (!currentCellContent) {
+      alert('❌ No content to translate');
+      return;
+    }
+    
+    const language = langSelect.value;
+    if (!language) {
+      alert('❌ Please select a language');
+      return;
+    }
+    
+    // Show loading
+    translateBtn.disabled = true;
+    translateBtn.textContent = '⏳ Dịch...';
+    
+    // Get settings
+    chrome.storage.local.get(['provider', 'claudeKey', 'openaiKey', 'geminiKey', 'openaiModel', 'geminiModel', 'customInstruction'], (data) => {
+      const provider = data.provider || 'claude';
+      const apiKey = data[provider + 'Key'];
+      let model = '';
+      
+      if (!apiKey) {
+        translateBtn.disabled = false;
+        translateBtn.textContent = '🌐 Dịch';
+        alert('❌ Please set up your API key in the extension settings');
+        return;
+      }
+      
+      switch(provider) {
+        case 'openai':
+          model = data.openaiModel || 'gpt-4-turbo';
+          break;
+        case 'gemini':
+          model = data.geminiModel || 'gemini-2.5-flash';
+          break;
+      }
+      
+      const langName = SUPPORTED_LANGUAGES[language];
+      const translationInstruction = `Translate to ${langName}. Only translate, do not add comments or explanations. Preserve formatting.`;
+      
+      // Send translation request
+      chrome.runtime.sendMessage({
+        type: 'TRANSLATE_TEXT',
+        text: currentCellContent,
+        provider: provider,
+        apiKey: apiKey,
+        model: model,
+        customInstruction: translationInstruction,
+        context: ''
+      }, (response) => {
+        translateBtn.disabled = false;
+        translateBtn.textContent = '🌐 Dịch';
+        
+        if (chrome.runtime.lastError) {
+          console.error('Chrome runtime error:', chrome.runtime.lastError);
+          const resultDiv = popover.querySelector('#translator-gs-result');
+          resultDiv.innerHTML = `❌ Error: ${chrome.runtime.lastError.message}`;
+          resultDiv.style.display = 'block';
+          return;
+        }
+        
+        if (response && response.success) {
+          const resultDiv = popover.querySelector('#translator-gs-result');
+          const formattedTranslation = formatTranslationText(response.translation);
+          resultDiv.innerHTML = `
+            <div style="font-weight: 600; margin-bottom: 8px; color: #667eea;">📝 Translation:</div>
+            <div style="color: #333; line-height: 1.5;">${formattedTranslation}</div>
+            <button id="translator-gs-copy" style="
+              background: white;
+              border: 1px solid #667eea;
+              color: #667eea;
+              padding: 4px 8px;
+              border-radius: 3px;
+              cursor: pointer;
+              font-size: 11px;
+              margin-top: 8px;
+            ">📋 Copy</button>
+          `;
+          resultDiv.style.display = 'block';
+          
+          // Copy button
+          resultDiv.querySelector('#translator-gs-copy')?.addEventListener('click', () => {
+            navigator.clipboard.writeText(response.translation);
+            const btn = resultDiv.querySelector('#translator-gs-copy');
+            const originalText = btn.textContent;
+            btn.textContent = '✅ Copied!';
+            setTimeout(() => {
+              btn.textContent = originalText;
+            }, 2000);
+          });
+        } else if (response && response.error) {
+          const resultDiv = popover.querySelector('#translator-gs-result');
+          resultDiv.innerHTML = `❌ Error: ${response.error}`;
+          resultDiv.style.display = 'block';
+        } else {
+          const resultDiv = popover.querySelector('#translator-gs-result');
+          resultDiv.innerHTML = '❌ No response from background script';
+          resultDiv.style.display = 'block';
+        }
+      });
+    });
+  });
+  
+  // Close popover when clicking outside
+  document.addEventListener('click', (e) => {
+    if (!popover.contains(e.target) && !e.target.closest('.grid-container')) {
+      // popover.style.display = 'none';  // Don't auto-close to allow user to interact
+    }
+  }, true);
 }
 
 // Collect all issue/ticket content as context for translation
