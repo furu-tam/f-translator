@@ -345,49 +345,81 @@ function injectGoogleSheetsTranslation() {
     background: white;
     border: 1px solid #ccc;
     border-radius: 8px;
-    padding: 12px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    padding: 0;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
     z-index: 10000;
     display: none;
-    width: 300px;
-    max-width: 90vw;
+    width: 320px;
+    min-height: 200px;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     font-size: 13px;
+    overflow: hidden;
   `;
   
   popover.innerHTML = `
-    <div style="display: flex; gap: 8px; margin-bottom: 10px;">
-      <select id="translator-gs-lang" style="flex: 1; padding: 6px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px;">
-        <option value="">📖 Choose language...</option>
-      </select>
-      <button id="translator-gs-btn" style="
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
-        border: none;
-        padding: 6px 12px;
-        border-radius: 4px;
-        cursor: pointer;
-        font-size: 12px;
-        font-weight: 600;
-        white-space: nowrap;
-      ">🌐 Dịch</button>
+    <div id="translator-gs-header" style="
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 8px 12px;
+      cursor: move;
+      user-select: none;
+      font-weight: 600;
+      font-size: 13px;
+    ">
+      <span>🌐 Translator</span>
       <button id="translator-gs-close" style="
         background: transparent;
-        color: #999;
+        color: white;
         border: none;
         cursor: pointer;
-        font-size: 16px;
-        padding: 0 4px;
+        font-size: 18px;
+        padding: 0;
+        width: 24px;
+        height: 24px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
       ">✕</button>
     </div>
-    <div id="translator-gs-result" style="
-      background: #f5f5f5;
-      border-radius: 4px;
-      padding: 8px;
-      min-height: 40px;
-      display: none;
-      max-height: 200px;
-      overflow-y: auto;
+    <div style="padding: 12px;">
+      <div style="display: flex; gap: 8px; margin-bottom: 10px;">
+        <select id="translator-gs-lang" style="flex: 1; padding: 6px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px;">
+          <option value="">📖 Choose language...</option>
+        </select>
+        <button id="translator-gs-btn" style="
+          background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+          color: white;
+          border: none;
+          padding: 6px 12px;
+          border-radius: 4px;
+          cursor: pointer;
+          font-size: 12px;
+          font-weight: 600;
+          white-space: nowrap;
+        ">🌐 Dịch</button>
+      </div>
+      <div id="translator-gs-result" style="
+        background: #f5f5f5;
+        border-radius: 4px;
+        padding: 8px;
+        min-height: 60px;
+        max-height: 300px;
+        overflow-y: auto;
+        display: none;
+      "></div>
+    </div>
+    <div id="translator-gs-resize" style="
+      position: absolute;
+      bottom: 0;
+      right: 0;
+      width: 20px;
+      height: 20px;
+      cursor: se-resize;
+      background: linear-gradient(135deg, transparent 0%, #667eea 100%);
+      border-radius: 0 0 8px 0;
     "></div>
   `;
   
@@ -406,6 +438,47 @@ function injectGoogleSheetsTranslation() {
   // Track current cell content
   let currentCellContent = '';
   let lastInputValue = '';
+  
+  // Dragging state
+  let isDragging = false;
+  let dragOffsetX = 0;
+  let dragOffsetY = 0;
+  
+  // Resizing state
+  let isResizing = false;
+  let resizeStartX = 0;
+  let resizeStartY = 0;
+  let resizeStartWidth = 320;
+  let resizeStartHeight = 200;
+  
+  // Get the position of the active cell indicator in Google Sheets
+  const getActiveCellPosition = () => {
+    // Look for the active cell border (Google Sheets has a blue border around active cell)
+    const activeCellBorder = document.querySelector('[class*="active-cell"], .active-cell-border');
+    if (activeCellBorder) {
+      const rect = activeCellBorder.getBoundingClientRect();
+      return { x: rect.right + 10, y: rect.top };
+    }
+    
+    // Look for cell with specific styling indicating it's selected
+    const selectedCells = document.querySelectorAll('[class*="selected"], [style*="border"]');
+    for (let cell of selectedCells) {
+      const style = window.getComputedStyle(cell);
+      if (style.borderColor && style.borderColor !== 'transparent') {
+        const rect = cell.getBoundingClientRect();
+        return { x: rect.right + 10, y: rect.top };
+      }
+    }
+    
+    // Fallback: position near grid center
+    const gridContainer = document.querySelector('.grid-container');
+    if (gridContainer) {
+      const rect = gridContainer.getBoundingClientRect();
+      return { x: rect.left + 400, y: rect.top + 150 };
+    }
+    
+    return { x: 100, y: 100 };
+  };
   
   // Function to find and monitor cell content from formula bar or contenteditable elements
   const getCellContent = () => {
@@ -456,16 +529,17 @@ function injectGoogleSheetsTranslation() {
       lastInputValue = content;
       currentCellContent = content;
       
-      // Find a good position for the popover
-      const gridContainer = document.querySelector('.grid-container');
-      const rect = gridContainer?.getBoundingClientRect() || { top: 100, left: 100 };
+      // Get active cell position and position popover next to it
+      const cellPos = getActiveCellPosition();
       
-      popover.style.top = (rect.top + 150) + 'px';
-      popover.style.left = Math.min(rect.left + 50, window.innerWidth - 320) + 'px';
+      popover.style.top = cellPos.y + 'px';
+      popover.style.left = Math.min(cellPos.x, window.innerWidth - 340) + 'px';
       
       // Reset result display
       popover.querySelector('#translator-gs-result').innerHTML = `📝 Content: ${content.substring(0, 100)}${content.length > 100 ? '...' : ''}`;
       popover.querySelector('#translator-gs-result').style.display = 'block';
+      
+      console.log('[GS] Popover positioned at:', cellPos);
       
       // Show popover
       popover.style.display = 'block';
@@ -504,6 +578,52 @@ function injectGoogleSheetsTranslation() {
     characterData: true,
     attributeFilter: ['aria-label', 'data-value', 'value'],
     characterDataOldValue: false
+  });
+  
+  // =========================
+  // Dragging functionality
+  // =========================
+  const header = popover.querySelector('#translator-gs-header');
+  
+  header.addEventListener('mousedown', (e) => {
+    isDragging = true;
+    dragOffsetX = e.clientX - popover.offsetLeft;
+    dragOffsetY = e.clientY - popover.offsetTop;
+    header.style.cursor = 'grabbing';
+  });
+  
+  document.addEventListener('mousemove', (e) => {
+    if (isDragging) {
+      popover.style.left = (e.clientX - dragOffsetX) + 'px';
+      popover.style.top = (e.clientY - dragOffsetY) + 'px';
+    }
+    
+    if (isResizing) {
+      const newWidth = Math.max(250, resizeStartWidth + (e.clientX - resizeStartX));
+      const newHeight = Math.max(150, resizeStartHeight + (e.clientY - resizeStartY));
+      popover.style.width = newWidth + 'px';
+      popover.style.minHeight = newHeight + 'px';
+    }
+  });
+  
+  document.addEventListener('mouseup', () => {
+    isDragging = false;
+    isResizing = false;
+    header.style.cursor = 'move';
+  });
+  
+  // =========================
+  // Resizing functionality
+  // =========================
+  const resizeHandle = popover.querySelector('#translator-gs-resize');
+  
+  resizeHandle.addEventListener('mousedown', (e) => {
+    isResizing = true;
+    resizeStartX = e.clientX;
+    resizeStartY = e.clientY;
+    resizeStartWidth = popover.offsetWidth;
+    resizeStartHeight = popover.offsetHeight;
+    resizeHandle.style.opacity = '1';
   });
   
   // Close button
