@@ -104,4 +104,155 @@ function showStatus(message, type) {
   }
 }
 
-console.log('✅ Popup script loaded - Settings only mode');
+// ===========================
+// Channel Settings Management
+// ===========================
+
+// Platforms that require domain
+const platformsWithDomain = ['backlog', 'jira'];
+
+// Tab switching
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const tabName = btn.dataset.tab;
+    
+    // Update active tab button
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    
+    // Update active content
+    document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+    document.getElementById(`${tabName}-tab`).classList.add('active');
+    
+    if (tabName === 'channels') {
+      loadChannelSettings();
+    }
+  });
+});
+
+// Load channel settings from storage
+function loadChannelSettings() {
+  chrome.storage.local.get('channelSettings', (data) => {
+    const channels = data.channelSettings || [];
+    renderChannelList(channels);
+  });
+}
+
+// Render channel list
+function renderChannelList(channels) {
+  const list = document.getElementById('channelList');
+  
+  if (channels.length === 0) {
+    list.innerHTML = '<div style="padding: 20px; text-align: center; color: #999; font-size: 13px;">📭 Chưa có channel nào. Hãy thêm mới!</div>';
+    return;
+  }
+  
+  list.innerHTML = channels.map(ch => `
+    <div class="channel-item">
+      <div class="channel-info">
+        <div class="channel-name">🔷 ${ch.name || `${ch.platform}${ch.domain ? ' - ' + ch.domain : ' (Global)'}`}</div>
+        <div class="channel-meta">
+          Platform: <strong>${ch.platform}</strong> 
+          ${ch.domain ? `| Domain: <strong>${ch.domain}</strong>` : ''}
+          | Provider: <strong>${ch.provider || 'Global'}</strong>
+        </div>
+      </div>
+      <div class="channel-actions">
+        <button onclick="editChannel('${ch.id}')">✏️ Edit</button>
+        <button class="danger" onclick="deleteChannel('${ch.id}')">🗑️ Delete</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+// Delete channel
+function deleteChannel(id) {
+  if (!confirm('Xoá channel này?')) return;
+  
+  chrome.storage.local.get('channelSettings', (data) => {
+    const channels = (data.channelSettings || []).filter(ch => ch.id !== id);
+    chrome.storage.local.set({ channelSettings: channels }, () => {
+      loadChannelSettings();
+      showStatus('✅ Channel đã xoá', 'success');
+    });
+  });
+}
+
+// Edit channel (TODO: implement later)
+function editChannel(id) {
+  alert('Edit feature coming soon!');
+}
+
+// Handle platform change to show/hide domain field
+document.getElementById('channelPlatform').addEventListener('change', function() {
+  const domainGroup = document.getElementById('channelDomainGroup');
+  const hasDomain = platformsWithDomain.includes(this.value);
+  domainGroup.style.display = hasDomain ? 'block' : 'none';
+  if (!hasDomain) {
+    document.getElementById('channelDomain').value = '';
+  }
+});
+
+// Add channel
+document.getElementById('addChannelBtn').addEventListener('click', () => {
+  const platform = document.getElementById('channelPlatform').value;
+  const domain = document.getElementById('channelDomain').value.trim();
+  const name = document.getElementById('channelName').value.trim();
+  const provider = document.getElementById('channelProvider').value;
+  const model = document.getElementById('channelModel').value.trim();
+  const instruction = document.getElementById('channelInstruction').value.trim();
+  
+  // Validation
+  if (!platform) {
+    showStatus('❌ Vui lòng chọn platform', 'error');
+    return;
+  }
+  
+  if (platformsWithDomain.includes(platform) && !domain) {
+    showStatus('❌ Vui lòng nhập domain', 'error');
+    return;
+  }
+  
+  // Check if channel already exists
+  chrome.storage.local.get('channelSettings', (data) => {
+    const channels = data.channelSettings || [];
+    const exists = channels.some(ch => 
+      ch.platform === platform && ch.domain === (domain || null)
+    );
+    
+    if (exists) {
+      showStatus('❌ Channel này đã tồn tại', 'error');
+      return;
+    }
+    
+    // Create new channel
+    const newChannel = {
+      id: `${platform}-${domain || 'global'}-${Date.now()}`,
+      platform,
+      domain: domain || null,
+      name: name || `${platform}${domain ? ' - ' + domain : ' (Global)'}`,
+      provider: provider || null,
+      model: model || null,
+      customInstruction: instruction || null,
+      enabled: true,
+      createdAt: Date.now()
+    };
+    
+    channels.push(newChannel);
+    chrome.storage.local.set({ channelSettings: channels }, () => {
+      // Clear form
+      document.getElementById('channelPlatform').value = '';
+      document.getElementById('channelDomain').value = '';
+      document.getElementById('channelName').value = '';
+      document.getElementById('channelProvider').value = '';
+      document.getElementById('channelModel').value = '';
+      document.getElementById('channelInstruction').value = '';
+      document.getElementById('channelDomainGroup').style.display = 'none';
+      
+      loadChannelSettings();
+      showStatus('✅ Channel đã thêm', 'success');
+    });
+  });
+});
+
+console.log('✅ Popup script loaded - Settings and Channel management');

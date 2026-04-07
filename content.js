@@ -34,6 +34,127 @@ const SUPPORTED_LANGUAGES = {
   'fi': 'Suomi (Finnish)'
 };
 
+// ===========================
+// Channel Settings Detection
+// ===========================
+
+// Detect current platform and domain
+function detectCurrentPlatform() {
+  const url = window.location.href;
+  const hostname = window.location.hostname;
+  
+  if (hostname.includes('backlog')) {
+    return { platform: 'backlog', domain: hostname };
+  }
+  if (hostname.includes('github.com')) {
+    return { platform: 'github', domain: null };
+  }
+  if (hostname.includes('jira') || hostname.includes('atlassian')) {
+    return { platform: 'jira', domain: hostname };
+  }
+  if (url.includes('docs.google.com/spreadsheets')) {
+    return { platform: 'excel', domain: null };
+  }
+  
+  return { platform: null, domain: null };
+}
+
+// Get channel settings matching current platform/domain
+async function getChannelSettings() {
+  return new Promise((resolve) => {
+    const { platform, domain } = detectCurrentPlatform();
+    
+    if (!platform) {
+      resolve(null);
+      return;
+    }
+    
+    chrome.storage.local.get('channelSettings', (data) => {
+      const channels = data.channelSettings || [];
+      
+      // Exact domain match (for backlog/jira)
+      const exactMatch = channels.find(ch => 
+        ch.platform === platform && ch.domain === domain && ch.enabled
+      );
+      
+      if (exactMatch) {
+        console.log('[Channel] Exact match found:', exactMatch);
+        resolve(exactMatch);
+        return;
+      }
+      
+      // Platform match without domain (for github/excel)
+      const platformMatch = channels.find(ch => 
+        ch.platform === platform && !ch.domain && ch.enabled
+      );
+      
+      if (platformMatch) {
+        console.log('[Channel] Platform match found:', platformMatch);
+        resolve(platformMatch);
+        return;
+      }
+      
+      // No matching channel settings
+      console.log('[Channel] No matching settings found for', platform);
+      resolve(null);
+    });
+  });
+}
+
+// Get effective settings (channel override + global fallback)
+async function getEffectiveSettings() {
+  return new Promise((resolve) => {
+    // Get global settings first
+    chrome.storage.local.get([
+      'provider', 'claudeKey', 'openaiKey', 'openaiModel',
+      'geminiKey', 'geminiModel', 'customInstruction'
+    ], async (globalData) => {
+      // Get channel settings
+      const channelSettings = await getChannelSettings();
+      
+      if (!channelSettings) {
+        // No channel match, use global settings
+        resolve({
+          provider: globalData.provider || 'claude',
+          apiKey: globalData.claudeKey || globalData.openaiKey || globalData.geminiKey,
+          model: globalData.openaiModel || globalData.geminiModel || '',
+          customInstruction: globalData.customInstruction || '',
+          source: 'global'
+        });
+        return;
+      }
+      
+      // Channel match found, use channel settings with global fallback
+      const provider = channelSettings.provider || globalData.provider || 'claude';
+      let apiKey = '';
+      let model = channelSettings.model || '';
+      
+      // Get appropriate API key for provider
+      switch(provider) {
+        case 'openai':
+          apiKey = globalData.openaiKey || '';
+          if (!model) model = globalData.openaiModel || '';
+          break;
+        case 'gemini':
+          apiKey = globalData.geminiKey || '';
+          if (!model) model = globalData.geminiModel || '';
+          break;
+        default: // claude
+          apiKey = globalData.claudeKey || '';
+      }
+      
+      resolve({
+        provider,
+        apiKey,
+        model,
+        customInstruction: channelSettings.customInstruction || globalData.customInstruction || '',
+        source: 'channel',
+        channel: channelSettings
+      });
+    });
+  });
+}
+
 // Inject translate button into all comments and ticket description
 function injectTranslateButtons() {
   // Handle Backlog comments separately
@@ -654,43 +775,31 @@ function injectGoogleSheetsTranslation() {
     translateBtn.disabled = true;
     translateBtn.textContent = '⏳ Dịch...';
     
-    // Get settings
-    chrome.storage.local.get(['provider', 'claudeKey', 'openaiKey', 'geminiKey', 'openaiModel', 'geminiModel', 'customInstruction'], (data) => {
-      const provider = data.provider || 'claude';
-      const apiKey = data[provider + 'Key'];
-      let model = '';
-      
-      if (!apiKey) {
-        translateBtn.disabled = false;
-        translateBtn.textContent = '🌐 Dịch';
-        alert('❌ Please set up your API key in the extension settings');
-        return;
-      }
-      
-      switch(provider) {
-        case 'openai':
-          model = data.openaiModel || 'gpt-4-turbo';
-          break;
-        case 'gemini':
-          model = data.geminiModel || 'gemini-2.5-flash';
-          break;
-      }
-      
-      const langName = SUPPORTED_LANGUAGES[language];
-      const translationInstruction = `Translate to ${langName}. Only translate, do not add comments or explanations. Preserve formatting.`;
-      
-      // Send translation request
-      chrome.runtime.sendMessage({
-        type: 'TRANSLATE_TEXT',
-        text: currentCellContent,
-        provider: provider,
-        apiKey: apiKey,
-        model: model,
-        customInstruction: translationInstruction,
-        context: ''
-      }, (response) => {
-        translateBtn.disabled = false;
-        translateBtn.textContent = '🌐 Dịch';
+    // Get effective settings (channel + global)
+    const settings = await getEffectiveSettings();
+    
+    if (!settings.apiKey) {
+      translateBtn.disabled = false;
+      translateBtn.textContent = '🌐 Dịch';
+      alert('❌ Please set up your API key in the extension settings');
+      return;
+    }
+    
+    const langName = SUPPORTED_LANGUAGES[language];
+    const translationInstruction = `Translate to ${langName}. Only translate, do not add comments or explanations. Preserve formatting.`;
+    
+    // Send translation request with effective settings
+    chrome.runtime.sendMessage({
+      type: 'TRANSLATE_TEXT',
+      text: currentCellContent,
+      provider: settings.provider,
+      apiKey: settings.apiKey,
+      model: settings.model,
+      customInstruction: settings.customInstruction || translationInstruction,
+      context: ''
+    }, (response) => {
+      translateBtn.disabled = false;
+      translateBtn.textContent = '🌐 Dịch';
         
         if (chrome.runtime.lastError) {
           console.error('Chrome runtime error:', chrome.runtime.lastError);
@@ -739,7 +848,6 @@ function injectGoogleSheetsTranslation() {
           resultDiv.style.display = 'block';
         }
       });
-    });
   });
   
   // Close popover when clicking outside
