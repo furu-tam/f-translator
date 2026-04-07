@@ -433,7 +433,7 @@ function injectGoogleSheetsTranslation() {
     option.textContent = name;
     langSelect.appendChild(option);
   });
-  langSelect.value = 'ja'; // Default to Japanese
+  langSelect.value = 'vi'; // Default to Vietnamese
   
   // Track current cell content
   let currentCellContent = '';
