@@ -907,34 +907,20 @@ function collectIssueContext() {
 
 // Translate single comment
 async function translateComment(contentEl, text, button) {
-  // Get settings from storage
-  chrome.storage.local.get(['provider', 'claudeKey', 'openaiKey', 'openaiModel', 'geminiKey', 'geminiModel', 'includeTicketContext', 'customInstruction'], (data) => {
-    const provider = data.provider || 'claude';
-    let apiKey = '';
-    let model = '';
-    
-    switch(provider) {
-      case 'openai': 
-        apiKey = data.openaiKey; 
-        model = data.openaiModel || 'gpt-4-turbo';
-        break;
-      case 'gemini': 
-        apiKey = data.geminiKey; 
-        model = data.geminiModel || 'gemini-2.5-flash';
-        break;
-      default: apiKey = data.claudeKey;
-    }
+  // Get effective settings (channel + global)
+  const settings = await getEffectiveSettings();
+  
+  if (!settings.apiKey) {
+    showErr(contentEl, `❌ Vui lòng cài đặt API key`);
+    return;
+  }
 
-    if (!apiKey) {
-      showErr(contentEl, `❌ Vui lòng cài đặt API key cho ${provider}`);
-      return;
-    }
+  // Show loading
+  button.disabled = true;
+  button.innerHTML = '⏳ Dịch...';
 
-    // Show loading
-    button.disabled = true;
-    button.innerHTML = '⏳ Dịch...';
-
-    // Collect full issue context only if enabled
+  // Collect full issue context only if enabled
+  chrome.storage.local.get(['includeTicketContext'], (data) => {
     const includeContext = data.includeTicketContext !== false;
     const context = includeContext ? collectIssueContext() : '';
 
@@ -943,10 +929,10 @@ async function translateComment(contentEl, text, button) {
       {
         type: 'TRANSLATE_TEXT',
         text: text,
-        provider: provider,
-        apiKey: apiKey,
-        model: model,
-        customInstruction: data.customInstruction || '',
+        provider: settings.provider,
+        apiKey: settings.apiKey,
+        model: settings.model,
+        customInstruction: settings.customInstruction || '',
         context: context
       },
       (response) => {
