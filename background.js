@@ -8,15 +8,65 @@ chrome.runtime.onInstalled.addListener(() => {
   console.log('✅ Backlog Translator extension installed');
   
   // Set default values
-  chrome.storage.local.get(['provider'], (data) => {
-    if (!data.provider) {
+  chrome.storage.local.get([
+    'globalSettings',
+    'channelSettings',
+    'provider',
+    'claudeKey',
+    'openaiKey',
+    'geminiKey',
+    'openaiModel',
+    'geminiModel',
+    'customInstruction',
+    'globalPlatformSettings',
+    'translateMode',
+    'translationHistory'
+  ], (data) => {
+    const updates = {};
+
+    if (!data.globalSettings) {
+      const provider = data.provider || 'claude';
+      let apiKey = '';
+      let model = 'claude-3-5-sonnet-20241022';
+
+      switch (provider) {
+        case 'openai':
+          apiKey = data.openaiKey || '';
+          model = data.openaiModel || 'gpt-4-turbo';
+          break;
+        case 'gemini':
+          apiKey = data.geminiKey || '';
+          model = data.geminiModel || 'gemini-2.5-flash';
+          break;
+        default:
+          apiKey = data.claudeKey || '';
+          break;
+      }
+
+      updates.globalSettings = {
+        provider,
+        model,
+        apiKey,
+        customInstruction: data.customInstruction || '',
+        enabledPlatforms: {
+          backlog: true,
+          github: true,
+          jira: true,
+          excel: true,
+          ...(data.globalPlatformSettings || {})
+        }
+      };
+    }
+
+    if (!Array.isArray(data.channelSettings)) {
+      updates.channelSettings = [];
+    }
+
+    if (Object.keys(updates).length > 0) {
       chrome.storage.local.set({
-        provider: 'claude',
-        claudeKey: '',
-        openaiKey: '',
-        geminiKey: '',
-        translateMode: 'all',
-        translationHistory: []
+        ...updates,
+        translateMode: data.translateMode || 'all',
+        translationHistory: data.translationHistory || []
       });
     }
   });
@@ -40,13 +90,14 @@ async function translateText(text, provider, apiKey, model = '', customInstructi
   switch(provider) {
     case 'openai': return await translateWithOpenAI(text, apiKey, model, customInstruction, context);
     case 'gemini': return await translateWithGemini(text, apiKey, model, customInstruction, context);
-    default: return await translateWithClaude(text, apiKey, customInstruction, context);
+    default: return await translateWithClaude(text, apiKey, model, customInstruction, context);
   }
 }
 
 // Claude (Anthropic)
-async function translateWithClaude(text, apiKey, customInstruction = '', context = '') {
+async function translateWithClaude(text, apiKey, model = '', customInstruction = '', context = '') {
   const instruction = customInstruction || 'Dịch sang Tiếng Việt. Chỉ dịch nội dung, không thêm lời bình luận hay giải thích.';
+  const selectedModel = model || 'claude-3-5-sonnet-20241022';
   const contentMessage = context 
     ? `${instruction}\n\n[CONTEXT FROM CONVERSATION]\n${context}\n\n[TEXT TO TRANSLATE]\n${text}`
     : `${instruction}\n\n${text}`;
@@ -60,7 +111,7 @@ async function translateWithClaude(text, apiKey, customInstruction = '', context
       'anthropic-dangerous-direct-browser-access': 'true'
     },
     body: JSON.stringify({
-      model: 'claude-3-5-sonnet-20241022',
+      model: selectedModel,
       max_tokens: 1024,
       messages: [
         {

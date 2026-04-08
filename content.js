@@ -34,6 +34,13 @@ const SUPPORTED_LANGUAGES = {
   'fi': 'Suomi (Finnish)'
 };
 
+const DEFAULT_ENABLED_PLATFORMS = {
+  backlog: true,
+  github: true,
+  jira: true,
+  excel: true
+};
+
 // ===========================
 // Channel Settings Detection
 // ===========================
@@ -59,8 +66,61 @@ function detectCurrentPlatform() {
   return { platform: null, domain: null };
 }
 
+function getDefaultGlobalSettings() {
+  return {
+    provider: 'claude',
+    model: 'claude-3-5-sonnet-20241022',
+    apiKey: '',
+    customInstruction: '',
+    enabledPlatforms: DEFAULT_ENABLED_PLATFORMS
+  };
+}
+
+function buildGlobalSettingsFromLegacy(settings = {}) {
+  const provider = settings.provider || 'claude';
+  let apiKey = '';
+  let model = 'claude-3-5-sonnet-20241022';
+
+  switch (provider) {
+    case 'openai':
+      apiKey = settings.openaiKey || '';
+      model = settings.openaiModel || 'gpt-4-turbo';
+      break;
+    case 'gemini':
+      apiKey = settings.geminiKey || '';
+      model = settings.geminiModel || 'gemini-2.5-flash';
+      break;
+    default:
+      apiKey = settings.claudeKey || '';
+      model = 'claude-3-5-sonnet-20241022';
+      break;
+  }
+
+  return {
+    provider,
+    model,
+    apiKey,
+    customInstruction: settings.customInstruction || '',
+    enabledPlatforms: {
+      ...DEFAULT_ENABLED_PLATFORMS,
+      ...(settings.globalPlatformSettings || {})
+    }
+  };
+}
+
+function normalizeGlobalSettings(settings = {}) {
+  return {
+    ...getDefaultGlobalSettings(),
+    ...settings,
+    enabledPlatforms: {
+      ...DEFAULT_ENABLED_PLATFORMS,
+      ...(settings.enabledPlatforms || {})
+    }
+  };
+}
+
 // Get channel settings matching current platform/domain
-async function getChannelSettings() {
+async function getMatchingChannelSettings() {
   return new Promise((resolve) => {
     const { platform, domain } = detectCurrentPlatform();
     
@@ -70,11 +130,11 @@ async function getChannelSettings() {
     }
     
     chrome.storage.local.get('channelSettings', (data) => {
-      const channels = data.channelSettings || [];
-      
+      const channels = Array.isArray(data.channelSettings) ? data.channelSettings : [];
+
       // Exact domain match (for backlog/jira)
-      const exactMatch = channels.find(ch => 
-        ch.platform === platform && ch.domain === domain && ch.enabled
+      const exactMatch = channels.find((ch) =>
+        ch.platform === platform && (ch.domain || null) === (domain || null)
       );
       
       if (exactMatch) {
@@ -84,8 +144,8 @@ async function getChannelSettings() {
       }
       
       // Platform match without domain (for github/excel)
-      const platformMatch = channels.find(ch => 
-        ch.platform === platform && !ch.domain && ch.enabled
+      const platformMatch = channels.find((ch) =>
+        ch.platform === platform && !ch.domain
       );
       
       if (platformMatch) {
@@ -101,76 +161,110 @@ async function getChannelSettings() {
   });
 }
 
-// Get effective settings (channel override + global fallback)
+// Get effective settings for the current platform.
+// Priority: matching channel -> global settings.
 async function getEffectiveSettings() {
   return new Promise((resolve) => {
-    // Get global settings first
+    const current = detectCurrentPlatform();
+    const { platform, domain } = current;
+
+    if (!platform) {
+      resolve(null);
+      return;
+    }
+
     chrome.storage.local.get([
-      'provider', 'claudeKey', 'openaiKey', 'openaiModel',
-      'geminiKey', 'geminiModel', 'customInstruction'
-    ], async (globalData) => {
-      // Get channel settings
-      const channelSettings = await getChannelSettings();
-      
-      if (!channelSettings) {
-        // No channel match, use global settings
+      'globalSettings',
+      'provider',
+      'claudeKey',
+      'openaiKey',
+      'geminiKey',
+      'openaiModel',
+      'geminiModel',
+      'customInstruction',
+      'globalPlatformSettings'
+    ], async (storageData) => {
+      const globalSettings = storageData.globalSettings
+        ? normalizeGlobalSettings(storageData.globalSettings)
+        : buildGlobalSettingsFromLegacy(storageData);
+      const channelSettings = await getMatchingChannelSettings();
+
+      if (channelSettings) {
+        if (channelSettings.enabled === false) {
+          console.log('[Channel] Matching channel is disabled:', channelSettings);
+          resolve(null);
+          return;
+        }
+
+        if (!channelSettings.provider || !channelSettings.apiKey || !channelSettings.model) {
+          console.log('[Channel] Incomplete detailed settings for', platform, domain || '(global)');
+          resolve(null);
+          return;
+        }
+
         resolve({
-          provider: globalData.provider || 'claude',
-          apiKey: globalData.claudeKey || globalData.openaiKey || globalData.geminiKey,
-          model: globalData.openaiModel || globalData.geminiModel || '',
-          customInstruction: globalData.customInstruction || '',
-          source: 'global'
+          ...current,
+          provider: channelSettings.provider,
+          apiKey: channelSettings.apiKey,
+          model: channelSettings.model,
+          customInstruction: channelSettings.customInstruction || '',
+          source: 'channel',
+          channel: channelSettings
         });
         return;
       }
-      
-      // Channel match found, use channel settings with global fallback
-      const provider = channelSettings.provider || globalData.provider || 'claude';
-      let apiKey = '';
-      let model = channelSettings.model || '';
-      
-      // Get appropriate API key for provider
-      switch(provider) {
-        case 'openai':
-          apiKey = globalData.openaiKey || '';
-          if (!model) model = globalData.openaiModel || '';
-          break;
-        case 'gemini':
-          apiKey = globalData.geminiKey || '';
-          if (!model) model = globalData.geminiModel || '';
-          break;
-        default: // claude
-          apiKey = globalData.claudeKey || '';
+
+      if (!globalSettings.enabledPlatforms[platform]) {
+        console.log('[Global] Platform is disabled globally:', platform);
+        resolve(null);
+        return;
       }
-      
+
+      if (!globalSettings.provider || !globalSettings.apiKey || !globalSettings.model) {
+        console.log('[Global] Missing or incomplete global settings for', platform);
+        resolve(null);
+        return;
+      }
+
       resolve({
-        provider,
-        apiKey,
-        model,
-        customInstruction: channelSettings.customInstruction || globalData.customInstruction || '',
-        source: 'channel',
-        channel: channelSettings
+        ...current,
+        provider: globalSettings.provider,
+        apiKey: globalSettings.apiKey,
+        model: globalSettings.model,
+        customInstruction: globalSettings.customInstruction || '',
+        source: 'global',
+        globalSettings
       });
     });
   });
 }
 
-// Inject translate button into all comments and ticket description
-function injectTranslateButtons() {
-  // Handle Backlog comments separately
-  injectBacklogTranslateButtons();
-  
-  // Handle GitHub comments
-  injectGitHubTranslateButtons();
-  
-  // Handle Jira comments and descriptions
-  injectJiraTranslateButtons();
-  
-  // Handle ticket descriptions
-  injectTicketDescriptionTranslateButton();
-  
-  // Handle Google Sheets
-  injectGoogleSheetsTranslation();
+// Inject only for the current platform when it is enabled and configured.
+async function injectTranslateButtons() {
+  const settings = await getEffectiveSettings();
+  if (!settings) {
+    return;
+  }
+
+  switch (settings.platform) {
+    case 'backlog':
+      injectBacklogTranslateButtons();
+      injectTicketDescriptionTranslateButton();
+      break;
+    case 'github':
+      injectGitHubTranslateButtons();
+      injectTicketDescriptionTranslateButton();
+      break;
+    case 'jira':
+      injectJiraTranslateButtons();
+      injectTicketDescriptionTranslateButton();
+      break;
+    case 'excel':
+      injectGoogleSheetsTranslation();
+      break;
+    default:
+      break;
+  }
 }
 
 // Inject translate buttons for Backlog comments (1 button per comment item)
@@ -285,7 +379,6 @@ function injectGitHubTranslateButtons() {
       font-weight: 600;
       margin-top: 12px;
       transition: all 0.3s ease;
-      width: 100%;
     `;
     
     button.addEventListener('mouseover', () => {
@@ -348,7 +441,6 @@ function injectJiraTranslateButtons() {
       font-weight: 600;
       margin-top: 12px;
       transition: all 0.3s ease;
-      width: 100%;
     `;
     
     button.addEventListener('mouseover', () => {
@@ -905,13 +997,35 @@ function collectIssueContext() {
   return contextParts.length > 0 ? contextParts.join('\n\n---\n\n') : '';
 }
 
+async function getRuntimeTranslationConfig(targetLang, contextNote) {
+  const settings = await getEffectiveSettings();
+
+  if (!settings || !settings.apiKey) {
+    return null;
+  }
+
+  const includeContext = await new Promise((resolve) => {
+    chrome.storage.local.get(['includeTicketContext'], (data) => {
+      resolve(data.includeTicketContext !== false);
+    });
+  });
+
+  const langName = SUPPORTED_LANGUAGES[targetLang] || targetLang;
+
+  return {
+    ...settings,
+    context: includeContext ? collectIssueContext() : '',
+    translationInstruction: `Translate to ${langName}. Only translate, do not add comments or explanations. Preserve formatting.${includeContext ? contextNote : ''}`
+  };
+}
+
 // Translate single comment
 async function translateComment(contentEl, text, button) {
   // Get effective settings (channel + global)
   const settings = await getEffectiveSettings();
   
-  if (!settings.apiKey) {
-    showErr(contentEl, `❌ Vui lòng cài đặt API key`);
+  if (!settings || !settings.apiKey) {
+    showErr(contentEl, '❌ Vui lòng cấu hình channel chi tiết cho platform này');
     return;
   }
 
@@ -1339,48 +1453,26 @@ function translateEditorContent(targetLang, button) {
   button.disabled = true;
   button.innerHTML = '⏳ Dịch...';
 
-  // Get settings
-  chrome.storage.local.get(['provider', 'claudeKey', 'openaiKey', 'openaiModel', 'geminiKey', 'geminiModel', 'includeTicketContext', 'customInstruction'], (data) => {
-    const provider = data.provider || 'claude';
-    let apiKey = '';
-    let model = '';
-    
-    switch(provider) {
-      case 'openai': 
-        apiKey = data.openaiKey; 
-        model = data.openaiModel || 'gpt-4-turbo';
-        break;
-      case 'gemini': 
-        apiKey = data.geminiKey; 
-        model = data.geminiModel || 'gemini-2.5-flash';
-        break;
-      default: apiKey = data.claudeKey;
-    }
-
-    if (!apiKey) {
-      alert(`❌ Vui lòng cài đặt API key cho ${provider}`);
+  getRuntimeTranslationConfig(
+    targetLang,
+    ' (Use ticket context as reference, but main focus is translating the selected comment)'
+  ).then((config) => {
+    if (!config) {
+      alert('❌ Vui lòng cấu hình channel chi tiết cho platform này');
       button.disabled = false;
       button.innerHTML = '🌐 Dịch';
       return;
     }
 
-    // Collect full issue context only if enabled
-    const includeContext = data.includeTicketContext !== false;
-    const context = includeContext ? collectIssueContext() : '';
-    const langName = SUPPORTED_LANGUAGES[targetLang];
-    const contextNote = includeContext ? ' (Use ticket context as reference, but main focus is translating the selected comment)' : '';
-    const translationInstruction = `Translate to ${langName}. Only translate, do not add comments or explanations. Preserve formatting.${contextNote}`;
-
-    // Send to background script
     chrome.runtime.sendMessage(
       {
         type: 'TRANSLATE_TEXT',
         text: text,
-        provider: provider,
-        apiKey: apiKey,
-        model: model,
-        customInstruction: translationInstruction,
-        context: context
+        provider: config.provider,
+        apiKey: config.apiKey,
+        model: config.model,
+        customInstruction: config.translationInstruction,
+        context: config.context
       },
       (response) => {
         button.disabled = false;
@@ -1398,7 +1490,7 @@ function translateEditorContent(targetLang, button) {
         } else if (response && response.error) {
           alert(`❌ Lỗi: ${response.error}`);
         } else {
-          alert(`❌ Lỗi: No response from background script`);
+          alert('❌ Lỗi: No response from background script');
         }
       }
     );
@@ -1690,48 +1782,26 @@ function translateGitHubEditorContent(targetLang, button, textarea, composerCont
   button.disabled = true;
   button.innerHTML = '⏳ Translating...';
 
-  // Get settings
-  chrome.storage.local.get(['provider', 'claudeKey', 'openaiKey', 'openaiModel', 'geminiKey', 'geminiModel', 'includeTicketContext', 'customInstruction'], (data) => {
-    const provider = data.provider || 'claude';
-    let apiKey = '';
-    let model = '';
-    
-    switch(provider) {
-      case 'openai': 
-        apiKey = data.openaiKey; 
-        model = data.openaiModel || 'gpt-4-turbo';
-        break;
-      case 'gemini': 
-        apiKey = data.geminiKey; 
-        model = data.geminiModel || 'gemini-2.5-flash';
-        break;
-      default: apiKey = data.claudeKey;
-    }
-
-    if (!apiKey) {
-      alert(`❌ Please set API key for ${provider}`);
+  getRuntimeTranslationConfig(
+    targetLang,
+    ' (Use issue context as reference, but main focus is translating the selected comment)'
+  ).then((config) => {
+    if (!config) {
+      alert('❌ Please configure a detailed channel for this platform');
       button.disabled = false;
       button.innerHTML = '🌐 Translate';
       return;
     }
 
-    // Collect full issue context only if enabled
-    const includeContext = data.includeTicketContext !== false;
-    const context = includeContext ? collectIssueContext() : '';
-    const langName = SUPPORTED_LANGUAGES[targetLang];
-    const contextNote = includeContext ? ' (Use issue context as reference, but main focus is translating the selected comment)' : '';
-    const translationInstruction = `Translate to ${langName}. Only translate, do not add comments or explanations. Preserve formatting.${contextNote}`;
-
-    // Send to background script
     chrome.runtime.sendMessage(
       {
         type: 'TRANSLATE_TEXT',
         text: text,
-        provider: provider,
-        apiKey: apiKey,
-        model: model,
-        customInstruction: translationInstruction,
-        context: context
+        provider: config.provider,
+        apiKey: config.apiKey,
+        model: config.model,
+        customInstruction: config.translationInstruction,
+        context: config.context
       },
       (response) => {
         button.disabled = false;
@@ -1749,7 +1819,7 @@ function translateGitHubEditorContent(targetLang, button, textarea, composerCont
         } else if (response && response.error) {
           alert(`❌ Error: ${response.error}`);
         } else {
-          alert(`❌ Error: No response from background script`);
+          alert('❌ Error: No response from background script');
         }
       }
     );
@@ -2009,44 +2079,25 @@ function translateReviewThreadReplyContent(textarea, language, form, button) {
   button.disabled = true;
   button.textContent = '⏳ Đang dịch...';
 
-  // Get provider and API key
-  chrome.storage.local.get(['provider', 'claudeKey', 'openaiKey', 'geminiKey', 'openaiModel', 'geminiModel', 'includeTicketContext', 'customInstruction'], (data) => {
-    const provider = data.provider || 'claude';
-    const apiKey = data[provider + 'Key'];
-    let model = '';
-
-    if (!apiKey) {
+  getRuntimeTranslationConfig(
+    language,
+    ' (Use issue context as reference, but main focus is translating the selected comment)'
+  ).then((config) => {
+    if (!config) {
       button.disabled = false;
       button.textContent = '🌐 Dịch';
-      alert('Please set up your API key in the extension settings');
+      alert('Vui lòng cấu hình channel chi tiết cho platform này');
       return;
     }
 
-    switch(provider) {
-      case 'openai':
-        model = data.openaiModel || 'gpt-4-turbo';
-        break;
-      case 'gemini':
-        model = data.geminiModel || 'gemini-2.5-flash';
-        break;
-    }
-
-    // Collect issue context only if enabled
-    const includeContext = data.includeTicketContext !== false;
-    const context = includeContext ? collectIssueContext() : '';
-    const langName = SUPPORTED_LANGUAGES[language];
-    const contextNote = includeContext ? ' (Use issue context as reference, but main focus is translating the selected comment)' : '';
-    const translationInstruction = `Translate to ${langName}. Only translate, do not add comments or explanations. Preserve formatting.${contextNote}`;
-
-    // Send translation request using correct message format
     chrome.runtime.sendMessage({
       type: 'TRANSLATE_TEXT',
       text: text,
-      provider: provider,
-      apiKey: apiKey,
-      model: model,
-      customInstruction: translationInstruction,
-      context: context
+      provider: config.provider,
+      apiKey: config.apiKey,
+      model: config.model,
+      customInstruction: config.translationInstruction,
+      context: config.context
     }, (response) => {
       button.disabled = false;
       button.textContent = '🌐 Dịch';
@@ -2335,44 +2386,25 @@ function translateJiraCommentContent(editor, language, container, button) {
   button.disabled = true;
   button.textContent = '⏳ Đang dịch...';
 
-  // Get provider and API key
-  chrome.storage.local.get(['provider', 'claudeKey', 'openaiKey', 'geminiKey', 'openaiModel', 'geminiModel', 'includeTicketContext', 'customInstruction'], (data) => {
-    const provider = data.provider || 'claude';
-    const apiKey = data[provider + 'Key'];
-    let model = '';
-
-    if (!apiKey) {
+  getRuntimeTranslationConfig(
+    language,
+    ' (Use issue context as reference, but main focus is translating the selected comment)'
+  ).then((config) => {
+    if (!config) {
       button.disabled = false;
       button.textContent = '🌐 Dịch';
-      alert('❌ Please set up your API key in the extension settings');
+      alert('❌ Vui lòng cấu hình channel chi tiết cho platform này');
       return;
     }
 
-    switch(provider) {
-      case 'openai':
-        model = data.openaiModel || 'gpt-4-turbo';
-        break;
-      case 'gemini':
-        model = data.geminiModel || 'gemini-2.5-flash';
-        break;
-    }
-
-    // Collect issue context only if enabled
-    const includeContext = data.includeTicketContext !== false;
-    const context = includeContext ? collectIssueContext() : '';
-    const langName = SUPPORTED_LANGUAGES[language];
-    const contextNote = includeContext ? ' (Use issue context as reference, but main focus is translating the selected comment)' : '';
-    const translationInstruction = `Translate to ${langName}. Only translate, do not add comments or explanations. Preserve formatting.${contextNote}`;
-
-    // Send translation request
     chrome.runtime.sendMessage({
       type: 'TRANSLATE_TEXT',
       text: text,
-      provider: provider,
-      apiKey: apiKey,
-      model: model,
-      customInstruction: translationInstruction,
-      context: context
+      provider: config.provider,
+      apiKey: config.apiKey,
+      model: config.model,
+      customInstruction: config.translationInstruction,
+      context: config.context
     }, (response) => {
       button.disabled = false;
       button.textContent = '🌐 Dịch';
@@ -2501,12 +2533,32 @@ function displayJiraCommentTranslationPreview(translation, container) {
   }
 }
 
+async function runInjectionCycle() {
+  const settings = await getEffectiveSettings();
+  if (!settings) {
+    return;
+  }
+
+  await injectTranslateButtons();
+
+  switch (settings.platform) {
+    case 'backlog':
+      injectEditorTranslation();
+      break;
+    case 'github':
+      injectGitHubEditorTranslation();
+      injectReviewThreadReplyTranslation();
+      break;
+    case 'jira':
+      injectJiraCommentEditorTranslation();
+      break;
+    default:
+      break;
+  }
+}
+
 // Run on page load
-injectTranslateButtons();
-injectEditorTranslation();
-injectGitHubEditorTranslation();
-injectReviewThreadReplyTranslation();
-injectJiraCommentEditorTranslation();
+runInjectionCycle();
 
 // Re-run when DOM changes (for infinite scroll, lazy loading, dynamic content)
 // Debounce to prevent excessive calls
@@ -2514,11 +2566,7 @@ let observerTimeout;
 const observer = new MutationObserver(() => {
   clearTimeout(observerTimeout);
   observerTimeout = setTimeout(() => {
-    injectTranslateButtons();
-    injectEditorTranslation();
-    injectGitHubEditorTranslation();
-    injectReviewThreadReplyTranslation();
-    injectJiraCommentEditorTranslation();
+    runInjectionCycle();
   }, 500); // Wait 500ms after DOM changes stop before running
 });
 
