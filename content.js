@@ -41,6 +41,103 @@ const DEFAULT_ENABLED_PLATFORMS = {
   excel: true
 };
 
+let extensionContextInvalidated = false;
+let extensionContextWarningShown = false;
+
+function markExtensionContextInvalidated() {
+  extensionContextInvalidated = true;
+
+  if (!extensionContextWarningShown) {
+    extensionContextWarningShown = true;
+    console.warn('[Translator] Extension context invalidated. Stopping old content script safely.');
+  }
+}
+
+function isExtensionContextValid() {
+  if (extensionContextInvalidated) {
+    return false;
+  }
+
+  try {
+    if (!chrome?.runtime?.id) {
+      markExtensionContextInvalidated();
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    markExtensionContextInvalidated();
+    return false;
+  }
+}
+
+function isContextInvalidationError(error) {
+  return String(error?.message || error || '').includes('Extension context invalidated');
+}
+
+async function safeStorageLocalGet(keys) {
+  if (!isExtensionContextValid()) {
+    return null;
+  }
+
+  try {
+    return await new Promise((resolve) => {
+      chrome.storage.local.get(keys, (data) => {
+        const runtimeError = chrome.runtime?.lastError;
+        if (runtimeError && isContextInvalidationError(runtimeError)) {
+          markExtensionContextInvalidated();
+          resolve(null);
+          return;
+        }
+
+        resolve(data || {});
+      });
+    });
+  } catch (error) {
+    if (isContextInvalidationError(error)) {
+      markExtensionContextInvalidated();
+      return null;
+    }
+
+    throw error;
+  }
+}
+
+async function safeRuntimeSendMessage(message) {
+  if (!isExtensionContextValid()) {
+    return { ok: false, invalidated: true, error: 'Extension context invalidated' };
+  }
+
+  try {
+    return await new Promise((resolve) => {
+      chrome.runtime.sendMessage(message, (response) => {
+        const runtimeError = chrome.runtime?.lastError;
+        if (runtimeError) {
+          if (isContextInvalidationError(runtimeError)) {
+            markExtensionContextInvalidated();
+          }
+
+          resolve({
+            ok: false,
+            invalidated: extensionContextInvalidated,
+            error: runtimeError.message
+          });
+          return;
+        }
+
+        resolve({ ok: true, response });
+      });
+    });
+  } catch (error) {
+    if (isContextInvalidationError(error)) {
+      markExtensionContextInvalidated();
+      return { ok: false, invalidated: true, error: 'Extension context invalidated' };
+    }
+
+    throw error;
+  }
+}
+
 // ===========================
 // Channel Settings Detection
 // ===========================
@@ -62,7 +159,7 @@ function detectCurrentPlatform() {
   if (url.includes('docs.google.com/spreadsheets')) {
     return { platform: 'excel', domain: null };
   }
-  
+
   return { platform: null, domain: null };
 }
 
@@ -121,122 +218,112 @@ function normalizeGlobalSettings(settings = {}) {
 
 // Get channel settings matching current platform/domain
 async function getMatchingChannelSettings() {
-  return new Promise((resolve) => {
-    const { platform, domain } = detectCurrentPlatform();
-    
-    if (!platform) {
-      resolve(null);
-      return;
-    }
-    
-    chrome.storage.local.get('channelSettings', (data) => {
-      const channels = Array.isArray(data.channelSettings) ? data.channelSettings : [];
+  const { platform, domain } = detectCurrentPlatform();
+  
+  if (!platform) {
+    return null;
+  }
 
-      // Exact domain match (for backlog/jira)
-      const exactMatch = channels.find((ch) =>
-        ch.platform === platform && (ch.domain || null) === (domain || null)
-      );
-      
-      if (exactMatch) {
-        console.log('[Channel] Exact match found:', exactMatch);
-        resolve(exactMatch);
-        return;
-      }
-      
-      // Platform match without domain (for github/excel)
-      const platformMatch = channels.find((ch) =>
-        ch.platform === platform && !ch.domain
-      );
-      
-      if (platformMatch) {
-        console.log('[Channel] Platform match found:', platformMatch);
-        resolve(platformMatch);
-        return;
-      }
-      
-      // No matching channel settings
-      console.log('[Channel] No matching settings found for', platform);
-      resolve(null);
-    });
-  });
+  const data = await safeStorageLocalGet('channelSettings');
+  if (!data) {
+    return null;
+  }
+
+  const channels = Array.isArray(data.channelSettings) ? data.channelSettings : [];
+
+  const exactMatch = channels.find((ch) =>
+    ch.platform === platform && (ch.domain || null) === (domain || null)
+  );
+  
+  if (exactMatch) {
+    console.log('[Channel] Exact match found:', exactMatch);
+    return exactMatch;
+  }
+  
+  const platformMatch = channels.find((ch) =>
+    ch.platform === platform && !ch.domain
+  );
+  
+  if (platformMatch) {
+    console.log('[Channel] Platform match found:', platformMatch);
+    return platformMatch;
+  }
+  
+  console.log('[Channel] No matching settings found for', platform);
+  return null;
 }
 
 // Get effective settings for the current platform.
 // Priority: matching channel -> global settings.
 async function getEffectiveSettings() {
-  return new Promise((resolve) => {
-    const current = detectCurrentPlatform();
-    const { platform, domain } = current;
+  const current = detectCurrentPlatform();
+  const { platform, domain } = current;
 
-    if (!platform) {
-      resolve(null);
-      return;
+  if (!platform) {
+    return null;
+  }
+
+  const storageData = await safeStorageLocalGet([
+    'globalSettings',
+    'provider',
+    'claudeKey',
+    'openaiKey',
+    'geminiKey',
+    'openaiModel',
+    'geminiModel',
+    'customInstruction',
+    'globalPlatformSettings'
+  ]);
+  if (!storageData) {
+    return null;
+  }
+
+  const globalSettings = storageData.globalSettings
+    ? normalizeGlobalSettings(storageData.globalSettings)
+    : buildGlobalSettingsFromLegacy(storageData);
+  const channelSettings = await getMatchingChannelSettings();
+
+  if (channelSettings) {
+    if (channelSettings.enabled === false) {
+      console.log('[Channel] Matching channel is disabled:', channelSettings);
+      return null;
     }
 
-    chrome.storage.local.get([
-      'globalSettings',
-      'provider',
-      'claudeKey',
-      'openaiKey',
-      'geminiKey',
-      'openaiModel',
-      'geminiModel',
-      'customInstruction',
-      'globalPlatformSettings'
-    ], async (storageData) => {
-      const globalSettings = storageData.globalSettings
-        ? normalizeGlobalSettings(storageData.globalSettings)
-        : buildGlobalSettingsFromLegacy(storageData);
-      const channelSettings = await getMatchingChannelSettings();
+    if (!channelSettings.provider || !channelSettings.apiKey || !channelSettings.model) {
+      console.log('[Channel] Incomplete detailed settings for', platform, domain || '(global)');
+      return null;
+    }
 
-      if (channelSettings) {
-        if (channelSettings.enabled === false) {
-          console.log('[Channel] Matching channel is disabled:', channelSettings);
-          resolve(null);
-          return;
-        }
+    return {
+      ...current,
+      provider: channelSettings.provider,
+      apiKey: channelSettings.apiKey,
+      model: channelSettings.model,
+      customInstruction: channelSettings.customInstruction || '',
+      source: 'channel',
+      channel: channelSettings
+    };
+  }
 
-        if (!channelSettings.provider || !channelSettings.apiKey || !channelSettings.model) {
-          console.log('[Channel] Incomplete detailed settings for', platform, domain || '(global)');
-          resolve(null);
-          return;
-        }
+  if (!globalSettings.enabledPlatforms[platform]) {
+    console.log('[Global] Platform is disabled globally:', platform);
+    return null;
+  }
 
-        resolve({
-          ...current,
-          provider: channelSettings.provider,
-          apiKey: channelSettings.apiKey,
-          model: channelSettings.model,
-          customInstruction: channelSettings.customInstruction || '',
-          source: 'channel',
-          channel: channelSettings
-        });
-        return;
-      }
+  if (!globalSettings.provider || !globalSettings.apiKey || !globalSettings.model) {
+    console.log('[Global] Missing or incomplete global settings for', platform);
+    return null;
+  }
 
-      if (!globalSettings.enabledPlatforms[platform]) {
-        console.log('[Global] Platform is disabled globally:', platform);
-        resolve(null);
-        return;
-      }
-
-      if (!globalSettings.provider || !globalSettings.apiKey || !globalSettings.model) {
-        console.log('[Global] Missing or incomplete global settings for', platform);
-        resolve(null);
-        return;
-      }
-
-      resolve({
-        ...current,
-        provider: globalSettings.provider,
-        apiKey: globalSettings.apiKey,
-        model: globalSettings.model,
-        customInstruction: globalSettings.customInstruction || '',
-        source: 'global',
-        globalSettings
-      });
-    });
-  });
+  return {
+    ...current,
+    provider: globalSettings.provider,
+    apiKey: globalSettings.apiKey,
+    model: globalSettings.model,
+    customInstruction: globalSettings.customInstruction || '',
+    source: 'global',
+    globalSettings
+  };
 }
 
 // Inject only for the current platform when it is enabled and configured.
@@ -562,8 +649,8 @@ function injectGoogleSheetsTranslation() {
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
     z-index: 10000;
     display: none;
-    width: 320px;
-    min-height: 200px;
+    width: 380px;
+    min-height: 240px;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     font-size: 13px;
     overflow: hidden;
@@ -598,6 +685,19 @@ function injectGoogleSheetsTranslation() {
       ">✕</button>
     </div>
     <div style="padding: 12px;">
+      <label for="translator-gs-source" style="display:block;margin-bottom:6px;font-size:11px;color:#555;font-weight:600;">Nội dung cần dịch (có thể chỉnh sửa)</label>
+      <textarea id="translator-gs-source" rows="5" style="
+        width: 100%;
+        box-sizing: border-box;
+        padding: 8px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        font-size: 13px;
+        font-family: inherit;
+        resize: vertical;
+        min-height: 80px;
+        margin-bottom: 10px;
+      " placeholder="Chọn ô trong sheet — nội dung ô sẽ hiện ở đây, hoặc gõ/chỉnh trực tiếp."></textarea>
       <div style="display: flex; gap: 8px; margin-bottom: 10px;">
         <select id="translator-gs-lang" style="flex: 1; padding: 6px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px;">
           <option value="">📖 Choose language...</option>
@@ -614,15 +714,32 @@ function injectGoogleSheetsTranslation() {
           white-space: nowrap;
         ">🌐 Dịch</button>
       </div>
-      <div id="translator-gs-result" style="
-        background: #f5f5f5;
-        border-radius: 4px;
-        padding: 8px;
-        min-height: 60px;
-        max-height: 300px;
-        overflow-y: auto;
-        display: none;
-      "></div>
+      <div id="translator-gs-output-section" style="display: none;">
+        <label for="translator-gs-output" style="display:block;margin-bottom:6px;font-size:11px;color:#555;font-weight:600;">Bản dịch (có thể chỉnh sửa)</label>
+        <textarea id="translator-gs-output" rows="5" style="
+          width: 100%;
+          box-sizing: border-box;
+          padding: 8px;
+          border: 1px solid #c8e6c9;
+          border-radius: 4px;
+          font-size: 13px;
+          font-family: inherit;
+          resize: vertical;
+          min-height: 80px;
+          margin-bottom: 8px;
+          background: #fafefa;
+        "></textarea>
+        <button type="button" id="translator-gs-copy" style="
+          background: white;
+          border: 1px solid #667eea;
+          color: #667eea;
+          padding: 4px 10px;
+          border-radius: 3px;
+          cursor: pointer;
+          font-size: 11px;
+        ">📋 Copy bản dịch</button>
+      </div>
+      <div id="translator-gs-error" style="display: none; color: #c62828; font-size: 12px; margin-top: 8px; line-height: 1.4;"></div>
     </div>
     <div id="translator-gs-resize" style="
       position: absolute;
@@ -734,27 +851,44 @@ function injectGoogleSheetsTranslation() {
     return '';
   };
   
+  const sourceTextarea = () => popover.querySelector('#translator-gs-source');
+  const outputSection = () => popover.querySelector('#translator-gs-output-section');
+  const outputTextarea = () => popover.querySelector('#translator-gs-output');
+  const errorEl = () => popover.querySelector('#translator-gs-error');
+
   // Monitor for cell selection changes
   const monitorCellContent = () => {
     const content = getCellContent();
-    
+
     if (content && content !== lastInputValue && content.length > 0) {
       lastInputValue = content;
       currentCellContent = content;
-      
-      // Get active cell position and position popover next to it
+
       const cellPos = getActiveCellPosition();
-      
+
       popover.style.top = cellPos.y + 'px';
-      popover.style.left = Math.min(cellPos.x, window.innerWidth - 340) + 'px';
-      
-      // Reset result display
-      popover.querySelector('#translator-gs-result').innerHTML = `📝 Content: ${content.substring(0, 100)}${content.length > 100 ? '...' : ''}`;
-      popover.querySelector('#translator-gs-result').style.display = 'block';
-      
+      popover.style.left = Math.min(cellPos.x, window.innerWidth - (popover.offsetWidth || 400) - 16) + 'px';
+
+      const src = sourceTextarea();
+      if (src) {
+        src.value = content;
+      }
+      const outSec = outputSection();
+      const outTa = outputTextarea();
+      if (outSec) {
+        outSec.style.display = 'none';
+      }
+      if (outTa) {
+        outTa.value = '';
+      }
+      const err = errorEl();
+      if (err) {
+        err.style.display = 'none';
+        err.textContent = '';
+      }
+
       console.log('[GS] Popover positioned at:', cellPos);
-      
-      // Show popover
+
       popover.style.display = 'block';
     }
   };
@@ -844,102 +978,122 @@ function injectGoogleSheetsTranslation() {
     popover.style.display = 'none';
     currentCellContent = '';
     lastInputValue = '';
+    const src = sourceTextarea();
+    if (src) {
+      src.value = '';
+    }
+    const outTa = outputTextarea();
+    if (outTa) {
+      outTa.value = '';
+    }
+    const outSec = outputSection();
+    if (outSec) {
+      outSec.style.display = 'none';
+    }
+    const err = errorEl();
+    if (err) {
+      err.style.display = 'none';
+      err.textContent = '';
+    }
   });
-  
+
+  popover.querySelector('#translator-gs-copy')?.addEventListener('click', () => {
+    const outTa = outputTextarea();
+    if (!outTa) {
+      return;
+    }
+    const text = outTa.value;
+    navigator.clipboard.writeText(text);
+    const btn = popover.querySelector('#translator-gs-copy');
+    if (!btn) {
+      return;
+    }
+    const originalText = btn.textContent;
+    btn.textContent = '✅ Đã copy';
+    setTimeout(() => {
+      btn.textContent = originalText;
+    }, 2000);
+  });
+
   // Translate button
   const translateBtn = popover.querySelector('#translator-gs-btn');
   translateBtn.addEventListener('click', async (e) => {
     e.preventDefault();
     e.stopPropagation();
-    
-    if (!currentCellContent) {
-      alert('❌ No content to translate');
+
+    const src = sourceTextarea();
+    const textToTranslate = (src && src.value) ? src.value.trim() : '';
+    if (!textToTranslate) {
+      alert('❌ Chưa có nội dung để dịch. Chọn ô trong sheet hoặc nhập vào ô bên trên.');
       return;
     }
-    
+
     const language = langSelect.value;
     if (!language) {
-      alert('❌ Please select a language');
+      alert('❌ Vui lòng chọn ngôn ngữ đích');
       return;
     }
-    
-    // Show loading
+
+    const err = errorEl();
+    if (err) {
+      err.style.display = 'none';
+      err.textContent = '';
+    }
+
     translateBtn.disabled = true;
     translateBtn.textContent = '⏳ Dịch...';
-    
-    // Get effective settings (channel + global)
+
     const settings = await getEffectiveSettings();
-    
-    if (!settings.apiKey) {
+
+    if (!settings || !settings.apiKey) {
       translateBtn.disabled = false;
       translateBtn.textContent = '🌐 Dịch';
-      alert('❌ Please set up your API key in the extension settings');
+      alert('❌ Vui lòng cấu hình API key trong extension');
       return;
     }
-    
+
     const langName = SUPPORTED_LANGUAGES[language];
     const translationInstruction = `Translate to ${langName}. Only translate, do not add comments or explanations. Preserve formatting.`;
-    
-    // Send translation request with effective settings
-    chrome.runtime.sendMessage({
+
+    const result = await safeRuntimeSendMessage({
       type: 'TRANSLATE_TEXT',
-      text: currentCellContent,
+      text: textToTranslate,
       provider: settings.provider,
       apiKey: settings.apiKey,
       model: settings.model,
       customInstruction: settings.customInstruction || translationInstruction,
       context: ''
-    }, (response) => {
-      translateBtn.disabled = false;
-      translateBtn.textContent = '🌐 Dịch';
-        
-        if (chrome.runtime.lastError) {
-          console.error('Chrome runtime error:', chrome.runtime.lastError);
-          const resultDiv = popover.querySelector('#translator-gs-result');
-          resultDiv.innerHTML = `❌ Error: ${chrome.runtime.lastError.message}`;
-          resultDiv.style.display = 'block';
-          return;
-        }
-        
-        if (response && response.success) {
-          const resultDiv = popover.querySelector('#translator-gs-result');
-          const formattedTranslation = formatTranslationText(response.translation);
-          resultDiv.innerHTML = `
-            <div style="font-weight: 600; margin-bottom: 8px; color: #667eea;">📝 Translation:</div>
-            <div style="color: #333; line-height: 1.5;">${formattedTranslation}</div>
-            <button id="translator-gs-copy" style="
-              background: white;
-              border: 1px solid #667eea;
-              color: #667eea;
-              padding: 4px 8px;
-              border-radius: 3px;
-              cursor: pointer;
-              font-size: 11px;
-              margin-top: 8px;
-            ">📋 Copy</button>
-          `;
-          resultDiv.style.display = 'block';
-          
-          // Copy button
-          resultDiv.querySelector('#translator-gs-copy')?.addEventListener('click', () => {
-            navigator.clipboard.writeText(response.translation);
-            const btn = resultDiv.querySelector('#translator-gs-copy');
-            const originalText = btn.textContent;
-            btn.textContent = '✅ Copied!';
-            setTimeout(() => {
-              btn.textContent = originalText;
-            }, 2000);
-          });
-        } else if (response && response.error) {
-          const resultDiv = popover.querySelector('#translator-gs-result');
-          resultDiv.innerHTML = `❌ Error: ${response.error}`;
-          resultDiv.style.display = 'block';
-        } else {
-          const resultDiv = popover.querySelector('#translator-gs-result');
-          resultDiv.innerHTML = '❌ No response from background script';
-          resultDiv.style.display = 'block';
-        }
-      });
+    });
+
+    translateBtn.disabled = false;
+    translateBtn.textContent = '🌐 Dịch';
+
+    if (!result.ok) {
+      if (!result.invalidated && err) {
+        err.textContent = `Lỗi: ${result.error || 'Unknown'}`;
+        err.style.display = 'block';
+      }
+      return;
+    }
+
+    const response = result.response;
+    const outSec = outputSection();
+    const outTa = outputTextarea();
+
+    if (response && response.success) {
+      if (outTa) {
+        outTa.value = response.translation != null ? String(response.translation) : '';
+      }
+      if (outSec) {
+        outSec.style.display = 'block';
+      }
+    } else if (response && response.error && err) {
+      err.textContent = `Lỗi: ${response.error}`;
+      err.style.display = 'block';
+    } else if (err) {
+      err.textContent = 'Không có phản hồi từ extension.';
+      err.style.display = 'block';
+    }
   });
   
   // Close popover when clicking outside
@@ -1004,11 +1158,8 @@ async function getRuntimeTranslationConfig(targetLang, contextNote) {
     return null;
   }
 
-  const includeContext = await new Promise((resolve) => {
-    chrome.storage.local.get(['includeTicketContext'], (data) => {
-      resolve(data.includeTicketContext !== false);
-    });
-  });
+  const contextData = await safeStorageLocalGet(['includeTicketContext']);
+  const includeContext = contextData ? contextData.includeTicketContext !== false : false;
 
   const langName = SUPPORTED_LANGUAGES[targetLang] || targetLang;
 
@@ -1033,42 +1184,38 @@ async function translateComment(contentEl, text, button) {
   button.disabled = true;
   button.innerHTML = '⏳ Dịch...';
 
-  // Collect full issue context only if enabled
-  chrome.storage.local.get(['includeTicketContext'], (data) => {
-    const includeContext = data.includeTicketContext !== false;
-    const context = includeContext ? collectIssueContext() : '';
+  const contextData = await safeStorageLocalGet(['includeTicketContext']);
+  const includeContext = contextData ? contextData.includeTicketContext !== false : false;
+  const context = includeContext ? collectIssueContext() : '';
 
-    // Call background script to translate
-    chrome.runtime.sendMessage(
-      {
-        type: 'TRANSLATE_TEXT',
-        text: text,
-        provider: settings.provider,
-        apiKey: settings.apiKey,
-        model: settings.model,
-        customInstruction: settings.customInstruction || '',
-        context: context
-      },
-      (response) => {
-        button.disabled = false;
-        button.innerHTML = '🌐 Dịch';
-
-        if (chrome.runtime.lastError) {
-          console.error('Chrome runtime error:', chrome.runtime.lastError);
-          showErr(contentEl, `❌ Lỗi: ${chrome.runtime.lastError.message}`);
-          return;
-        }
-
-        if (response && response.success) {
-          displayTranslation(contentEl, text, response.translation);
-        } else if (response && response.error) {
-          showErr(contentEl, `❌ Lỗi: ${response.error}`);
-        } else {
-          showErr(contentEl, `❌ Lỗi: No response from background script`);
-        }
-      }
-    );
+  const result = await safeRuntimeSendMessage({
+    type: 'TRANSLATE_TEXT',
+    text: text,
+    provider: settings.provider,
+    apiKey: settings.apiKey,
+    model: settings.model,
+    customInstruction: settings.customInstruction || '',
+    context: context
   });
+
+  button.disabled = false;
+  button.innerHTML = '🌐 Dịch';
+
+  if (!result.ok) {
+    if (!result.invalidated) {
+      showErr(contentEl, `❌ Lỗi: ${result.error}`);
+    }
+    return;
+  }
+
+  const response = result.response;
+  if (response && response.success) {
+    displayTranslation(contentEl, text, response.translation);
+  } else if (response && response.error) {
+    showErr(contentEl, `❌ Lỗi: ${response.error}`);
+  } else {
+    showErr(contentEl, '❌ Lỗi: No response from background script');
+  }
 }
 
 // Convert plain text to formatted HTML
@@ -1464,36 +1611,34 @@ function translateEditorContent(targetLang, button) {
       return;
     }
 
-    chrome.runtime.sendMessage(
-      {
-        type: 'TRANSLATE_TEXT',
-        text: text,
-        provider: config.provider,
-        apiKey: config.apiKey,
-        model: config.model,
-        customInstruction: config.translationInstruction,
-        context: config.context
-      },
-      (response) => {
-        button.disabled = false;
-        button.innerHTML = '🌐 Dịch';
+    safeRuntimeSendMessage({
+      type: 'TRANSLATE_TEXT',
+      text: text,
+      provider: config.provider,
+      apiKey: config.apiKey,
+      model: config.model,
+      customInstruction: config.translationInstruction,
+      context: config.context
+    }).then((result) => {
+      button.disabled = false;
+      button.innerHTML = '🌐 Dịch';
 
-        if (chrome.runtime.lastError) {
-          console.error('Chrome runtime error:', chrome.runtime.lastError);
-          alert(`❌ Lỗi: ${chrome.runtime.lastError.message}`);
-          return;
+      if (!result.ok) {
+        if (!result.invalidated) {
+          alert(`❌ Lỗi: ${result.error}`);
         }
-
-        if (response && response.success) {
-          // Display translation as preview using the editor form as container
-          displayEditorTranslationPreview(editor, text, response.translation);
-        } else if (response && response.error) {
-          alert(`❌ Lỗi: ${response.error}`);
-        } else {
-          alert('❌ Lỗi: No response from background script');
-        }
+        return;
       }
-    );
+
+      const response = result.response;
+      if (response && response.success) {
+        displayEditorTranslationPreview(editor, text, response.translation);
+      } else if (response && response.error) {
+        alert(`❌ Lỗi: ${response.error}`);
+      } else {
+        alert('❌ Lỗi: No response from background script');
+      }
+    });
   });
 }
 
@@ -1793,36 +1938,34 @@ function translateGitHubEditorContent(targetLang, button, textarea, composerCont
       return;
     }
 
-    chrome.runtime.sendMessage(
-      {
-        type: 'TRANSLATE_TEXT',
-        text: text,
-        provider: config.provider,
-        apiKey: config.apiKey,
-        model: config.model,
-        customInstruction: config.translationInstruction,
-        context: config.context
-      },
-      (response) => {
-        button.disabled = false;
-        button.innerHTML = '🌐 Translate';
+    safeRuntimeSendMessage({
+      type: 'TRANSLATE_TEXT',
+      text: text,
+      provider: config.provider,
+      apiKey: config.apiKey,
+      model: config.model,
+      customInstruction: config.translationInstruction,
+      context: config.context
+    }).then((result) => {
+      button.disabled = false;
+      button.innerHTML = '🌐 Translate';
 
-        if (chrome.runtime.lastError) {
-          console.error('Chrome runtime error:', chrome.runtime.lastError);
-          alert(`❌ Error: ${chrome.runtime.lastError.message}`);
-          return;
+      if (!result.ok) {
+        if (!result.invalidated) {
+          alert(`❌ Error: ${result.error}`);
         }
-
-        if (response && response.success) {
-          // Display translation as preview
-          displayGitHubEditorTranslationPreview(composerContainer, text, response.translation);
-        } else if (response && response.error) {
-          alert(`❌ Error: ${response.error}`);
-        } else {
-          alert('❌ Error: No response from background script');
-        }
+        return;
       }
-    );
+
+      const response = result.response;
+      if (response && response.success) {
+        displayGitHubEditorTranslationPreview(composerContainer, text, response.translation);
+      } else if (response && response.error) {
+        alert(`❌ Error: ${response.error}`);
+      } else {
+        alert('❌ Error: No response from background script');
+      }
+    });
   });
 }
 
@@ -2090,7 +2233,7 @@ function translateReviewThreadReplyContent(textarea, language, form, button) {
       return;
     }
 
-    chrome.runtime.sendMessage({
+    safeRuntimeSendMessage({
       type: 'TRANSLATE_TEXT',
       text: text,
       provider: config.provider,
@@ -2098,16 +2241,18 @@ function translateReviewThreadReplyContent(textarea, language, form, button) {
       model: config.model,
       customInstruction: config.translationInstruction,
       context: config.context
-    }, (response) => {
+    }).then((result) => {
       button.disabled = false;
       button.textContent = '🌐 Dịch';
 
-      if (chrome.runtime.lastError) {
-        console.error('Chrome runtime error:', chrome.runtime.lastError);
-        alert(`Translation error: ${chrome.runtime.lastError.message}`);
+      if (!result.ok) {
+        if (!result.invalidated) {
+          alert(`Translation error: ${result.error}`);
+        }
         return;
       }
 
+      const response = result.response;
       if (response && response.success) {
         displayReviewThreadReplyTranslationPreview(response.translation, form);
       } else if (response && response.error) {
@@ -2397,7 +2542,7 @@ function translateJiraCommentContent(editor, language, container, button) {
       return;
     }
 
-    chrome.runtime.sendMessage({
+    safeRuntimeSendMessage({
       type: 'TRANSLATE_TEXT',
       text: text,
       provider: config.provider,
@@ -2405,16 +2550,18 @@ function translateJiraCommentContent(editor, language, container, button) {
       model: config.model,
       customInstruction: config.translationInstruction,
       context: config.context
-    }, (response) => {
+    }).then((result) => {
       button.disabled = false;
       button.textContent = '🌐 Dịch';
 
-      if (chrome.runtime.lastError) {
-        console.error('Chrome runtime error:', chrome.runtime.lastError);
-        alert(`❌ Translation error: ${chrome.runtime.lastError.message}`);
+      if (!result.ok) {
+        if (!result.invalidated) {
+          alert(`❌ Translation error: ${result.error}`);
+        }
         return;
       }
 
+      const response = result.response;
       if (response && response.success) {
         displayJiraCommentTranslationPreview(response.translation, container);
       } else if (response && response.error) {
@@ -2534,6 +2681,10 @@ function displayJiraCommentTranslationPreview(translation, container) {
 }
 
 async function runInjectionCycle() {
+  if (!isExtensionContextValid()) {
+    return;
+  }
+
   const settings = await getEffectiveSettings();
   if (!settings) {
     return;
@@ -2564,8 +2715,17 @@ runInjectionCycle();
 // Debounce to prevent excessive calls
 let observerTimeout;
 const observer = new MutationObserver(() => {
+  if (!isExtensionContextValid()) {
+    observer.disconnect();
+    return;
+  }
+
   clearTimeout(observerTimeout);
   observerTimeout = setTimeout(() => {
+    if (!isExtensionContextValid()) {
+      observer.disconnect();
+      return;
+    }
     runInjectionCycle();
   }, 500); // Wait 500ms after DOM changes stop before running
 });
