@@ -1423,19 +1423,30 @@ function displayTranslation(contentEl, original, translation) {
         font-weight: bold;
       }
     </style>
-    <div style="font-weight: 600; margin-bottom: 6px;">📝 Bản dịch:
-      <button class="copy-trans-btn" style="
-        float: right;
-        background: white;
-        border: 1px solid #4caf50;
-        color: #4caf50;
-        padding: 2px 8px;
-        border-radius: 3px;
-        cursor: pointer;
-        font-size: 11px;
-      ">📋 Copy</button>
+    <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-weight: 600; margin-bottom: 6px;">
+      <span>📝 Bản dịch:</span>
+      <span style="display: flex; align-items: center; gap: 6px;">
+        <button type="button" class="copy-trans-btn" style="
+          background: white;
+          border: 1px solid #4caf50;
+          color: #4caf50;
+          padding: 2px 8px;
+          border-radius: 3px;
+          cursor: pointer;
+          font-size: 11px;
+        ">📋 Copy</button>
+        <button type="button" class="translator-close-result-btn" style="
+          background: white;
+          border: 1px solid #9e9e9e;
+          color: #616161;
+          padding: 2px 8px;
+          border-radius: 3px;
+          cursor: pointer;
+          font-size: 11px;
+        ">✕ Đóng</button>
+      </span>
     </div>
-    <div style="clear: both; margin-top: 6px;">${formattedTranslation}</div>
+    <div style="margin-top: 6px;">${formattedTranslation}</div>
   `;
 
   // Copy button handler
@@ -1447,6 +1458,10 @@ function displayTranslation(contentEl, original, translation) {
     setTimeout(() => {
       btn.textContent = originalText;
     }, 2000);
+  });
+
+  resultDiv.querySelector('.translator-close-result-btn').addEventListener('click', () => {
+    resultDiv.remove();
   });
 
   contentEl.appendChild(resultDiv);
@@ -1760,19 +1775,30 @@ function displayEditorTranslationPreview(editor, original, translation) {
         font-weight: bold;
       }
     </style>
-    <div style="font-weight: 600; margin-bottom: 6px;">📝 Bản dịch:
-      <button class="copy-trans-btn-editor" style="
-        float: right;
-        background: white;
-        border: 1px solid #4caf50;
-        color: #4caf50;
-        padding: 2px 8px;
-        border-radius: 3px;
-        cursor: pointer;
-        font-size: 11px;
-      ">📋 Copy</button>
+    <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-weight: 600; margin-bottom: 6px;">
+      <span>📝 Bản dịch:</span>
+      <span style="display: flex; align-items: center; gap: 6px;">
+        <button type="button" class="copy-trans-btn-editor" style="
+          background: white;
+          border: 1px solid #4caf50;
+          color: #4caf50;
+          padding: 2px 8px;
+          border-radius: 3px;
+          cursor: pointer;
+          font-size: 11px;
+        ">📋 Copy</button>
+        <button type="button" class="translator-close-result-btn" style="
+          background: white;
+          border: 1px solid #9e9e9e;
+          color: #616161;
+          padding: 2px 8px;
+          border-radius: 3px;
+          cursor: pointer;
+          font-size: 11px;
+        ">✕ Đóng</button>
+      </span>
     </div>
-    <div style="clear: both; margin-top: 6px;">${formattedTranslation}</div>
+    <div style="margin-top: 6px;">${formattedTranslation}</div>
   `;
 
   // Copy button handler
@@ -1784,6 +1810,10 @@ function displayEditorTranslationPreview(editor, original, translation) {
     setTimeout(() => {
       btn.textContent = originalText;
     }, 2000);
+  });
+
+  resultDiv.querySelector('.translator-close-result-btn').addEventListener('click', () => {
+    resultDiv.remove();
   });
 
   // Insert preview above input wrapper
@@ -2087,19 +2117,30 @@ function displayGitHubEditorTranslationPreview(composerContainer, original, tran
         font-weight: bold;
       }
     </style>
-    <div style="font-weight: 600; margin-bottom: 6px; color: #28a745;">📝 Translation:
-      <button class="copy-trans-btn-github" style="
-        float: right;
-        background: white;
-        border: 1px solid #28a745;
-        color: #28a745;
-        padding: 2px 8px;
-        border-radius: 3px;
-        cursor: pointer;
-        font-size: 11px;
-      ">📋 Copy</button>
+    <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-weight: 600; margin-bottom: 6px; color: #28a745;">
+      <span>📝 Translation:</span>
+      <span style="display: flex; align-items: center; gap: 6px;">
+        <button type="button" class="copy-trans-btn-github" style="
+          background: white;
+          border: 1px solid #28a745;
+          color: #28a745;
+          padding: 2px 8px;
+          border-radius: 3px;
+          cursor: pointer;
+          font-size: 11px;
+        ">📋 Copy</button>
+        <button type="button" class="translator-close-result-btn" style="
+          background: white;
+          border: 1px solid #959da5;
+          color: #586069;
+          padding: 2px 8px;
+          border-radius: 3px;
+          cursor: pointer;
+          font-size: 11px;
+        ">✕ Đóng</button>
+      </span>
     </div>
-    <div style="clear: both; margin-top: 6px; color: #24292e;">${formattedTranslation}</div>
+    <div style="margin-top: 6px; color: #24292e;">${formattedTranslation}</div>
   `;
 
   // Copy button handler
@@ -2111,6 +2152,10 @@ function displayGitHubEditorTranslationPreview(composerContainer, original, tran
     setTimeout(() => {
       btn.textContent = originalText;
     }, 2000);
+  });
+
+  resultDiv.querySelector('.translator-close-result-btn').addEventListener('click', () => {
+    resultDiv.remove();
   });
 
   // Insert preview at the beginning of composer container
@@ -2380,19 +2425,30 @@ function displayReviewThreadReplyTranslationPreview(translation, form) {
         font-weight: bold;
       }
     </style>
-    <div style="font-weight: 600; margin-bottom: 6px; color: #28a745;">📝 Translation:
-      <button class="copy-trans-btn-review" style="
-        float: right;
-        background: white;
-        border: 1px solid #28a745;
-        color: #28a745;
-        padding: 2px 8px;
-        border-radius: 3px;
-        cursor: pointer;
-        font-size: 11px;
-      ">📋 Copy</button>
+    <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-weight: 600; margin-bottom: 6px; color: #28a745;">
+      <span>📝 Translation:</span>
+      <span style="display: flex; align-items: center; gap: 6px;">
+        <button type="button" class="copy-trans-btn-review" style="
+          background: white;
+          border: 1px solid #28a745;
+          color: #28a745;
+          padding: 2px 8px;
+          border-radius: 3px;
+          cursor: pointer;
+          font-size: 11px;
+        ">📋 Copy</button>
+        <button type="button" class="translator-close-result-btn" style="
+          background: white;
+          border: 1px solid #959da5;
+          color: #586069;
+          padding: 2px 8px;
+          border-radius: 3px;
+          cursor: pointer;
+          font-size: 11px;
+        ">✕ Đóng</button>
+      </span>
     </div>
-    <div class="translator-review-reply-result" style="clear: both; margin-top: 6px; color: #24292e;">${formattedTranslation}</div>
+    <div class="translator-review-reply-result" style="margin-top: 6px; color: #24292e;">${formattedTranslation}</div>
   `;
 
   // Copy button handler
@@ -2404,6 +2460,10 @@ function displayReviewThreadReplyTranslationPreview(translation, form) {
     setTimeout(() => {
       btn.textContent = originalText;
     }, 2000);
+  });
+
+  resultDiv.querySelector('.translator-close-result-btn').addEventListener('click', () => {
+    resultDiv.remove();
   });
 
   // Insert preview before the form (above the reply area)
@@ -2644,20 +2704,30 @@ function displayJiraCommentTranslationPreview(translation, container) {
         font-weight: bold;
       }
     </style>
-    <div style="font-weight: 600; margin-bottom: 6px; color: #667eea;">
-      📝 Bản dịch:
-      <button class="copy-trans-btn-jira" style="
-        float: right;
-        background: white;
-        border: 1px solid #667eea;
-        color: #667eea;
-        padding: 2px 8px;
-        border-radius: 3px;
-        cursor: pointer;
-        font-size: 11px;
-      ">📋 Copy</button>
+    <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-weight: 600; margin-bottom: 6px; color: #667eea;">
+      <span>📝 Bản dịch:</span>
+      <span style="display: flex; align-items: center; gap: 6px;">
+        <button type="button" class="copy-trans-btn-jira" style="
+          background: white;
+          border: 1px solid #667eea;
+          color: #667eea;
+          padding: 2px 8px;
+          border-radius: 3px;
+          cursor: pointer;
+          font-size: 11px;
+        ">📋 Copy</button>
+        <button type="button" class="translator-close-result-btn" style="
+          background: white;
+          border: 1px solid #9e9e9e;
+          color: #616161;
+          padding: 2px 8px;
+          border-radius: 3px;
+          cursor: pointer;
+          font-size: 11px;
+        ">✕ Đóng</button>
+      </span>
     </div>
-    <div class="translator-jira-result" style="clear: both; margin-top: 6px;">${formattedTranslation}</div>
+    <div class="translator-jira-result" style="margin-top: 6px;">${formattedTranslation}</div>
   `;
 
   // Copy button handler
@@ -2669,6 +2739,10 @@ function displayJiraCommentTranslationPreview(translation, container) {
     setTimeout(() => {
       copyBtn.textContent = originalText;
     }, 2000);
+  });
+
+  resultDiv.querySelector('.translator-close-result-btn').addEventListener('click', () => {
+    resultDiv.remove();
   });
 
   // Insert preview above the editor
