@@ -1499,8 +1499,24 @@ function injectEditorTranslation() {
   const editor = document.getElementById('switchStatusAddCommentForm');
   if (!editor) return;
 
+  const contentEl = editor.querySelector('[data-testid="textEditor"]');
+  const hasInputContent = !!contentEl?.innerText?.trim();
+  const existingContainer = editor.querySelector('.translator-editor-container');
+
+  // Only inject translation UI when editor has content
+  if (!hasInputContent) {
+    if (existingContainer) {
+      existingContainer.remove();
+    }
+    const existingPreview = editor.querySelector('.translator-editor-result');
+    if (existingPreview) {
+      existingPreview.remove();
+    }
+    return;
+  }
+
   // Skip if already injected
-  if (editor.querySelector('.translator-lang-selector')) {
+  if (existingContainer) {
     return;
   }
 
