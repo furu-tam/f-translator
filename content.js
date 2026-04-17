@@ -697,7 +697,7 @@ function injectGoogleSheetsTranslation() {
         resize: vertical;
         min-height: 80px;
         margin-bottom: 10px;
-      " placeholder="Chọn ô trong sheet — nội dung ô sẽ hiện ở đây, hoặc gõ/chỉnh trực tiếp."></textarea>
+      " placeholder="Chọn/focus vào ô trên lưới để hiện nút 🌐 Dịch, rồi chỉnh nội dung nếu cần."></textarea>
       <div style="display: flex; gap: 8px; margin-bottom: 10px;">
         <select id="translator-gs-lang" style="flex: 1; padding: 6px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px;">
           <option value="">📖 Choose language...</option>
@@ -765,9 +765,23 @@ function injectGoogleSheetsTranslation() {
   });
   langSelect.value = 'vi'; // Default to Vietnamese
   
-  // Track current cell content
+  // Track current cell content (e.g. when closing popover)
   let currentCellContent = '';
-  let lastInputValue = '';
+
+  /** Vị trí focus/chọn ô gần nhất trên lưới để đặt nút Dịch và popover. */
+  let gsLastFocusAnchor = {
+    x: Math.floor(window.innerWidth / 2),
+    y: Math.floor(window.innerHeight / 3)
+  };
+
+  let gsFocusTranslateBtn = null;
+
+  const removeGsFocusTranslateButton = () => {
+    if (gsFocusTranslateBtn) {
+      gsFocusTranslateBtn.remove();
+      gsFocusTranslateBtn = null;
+    }
+  };
   
   // Dragging state
   let isDragging = false;
@@ -780,35 +794,6 @@ function injectGoogleSheetsTranslation() {
   let resizeStartY = 0;
   let resizeStartWidth = 320;
   let resizeStartHeight = 200;
-  
-  // Get the position of the active cell indicator in Google Sheets
-  const getActiveCellPosition = () => {
-    // Look for the active cell border (Google Sheets has a blue border around active cell)
-    const activeCellBorder = document.querySelector('[class*="active-cell"], .active-cell-border');
-    if (activeCellBorder) {
-      const rect = activeCellBorder.getBoundingClientRect();
-      return { x: rect.right + 10, y: rect.top };
-    }
-    
-    // Look for cell with specific styling indicating it's selected
-    const selectedCells = document.querySelectorAll('[class*="selected"], [style*="border"]');
-    for (let cell of selectedCells) {
-      const style = window.getComputedStyle(cell);
-      if (style.borderColor && style.borderColor !== 'transparent') {
-        const rect = cell.getBoundingClientRect();
-        return { x: rect.right + 10, y: rect.top };
-      }
-    }
-    
-    // Fallback: position near grid center
-    const gridContainer = document.querySelector('.grid-container');
-    if (gridContainer) {
-      const rect = gridContainer.getBoundingClientRect();
-      return { x: rect.left + 400, y: rect.top + 150 };
-    }
-    
-    return { x: 100, y: 100 };
-  };
   
   // Function to find and monitor cell content from formula bar or contenteditable elements
   const getCellContent = () => {
@@ -856,76 +841,126 @@ function injectGoogleSheetsTranslation() {
   const outputTextarea = () => popover.querySelector('#translator-gs-output');
   const errorEl = () => popover.querySelector('#translator-gs-error');
 
-  // Monitor for cell selection changes
-  const monitorCellContent = () => {
-    const content = getCellContent();
+  /** Open popover with text read from the sheet (formula bar), positioned near the pointer. */
+  const openGsPopoverWithContent = (content, anchorClientX, anchorClientY) => {
+    const text = content != null ? String(content) : '';
+    currentCellContent = text;
 
-    if (content && content !== lastInputValue && content.length > 0) {
-      lastInputValue = content;
-      currentCellContent = content;
+    const src = sourceTextarea();
+    if (src) {
+      src.value = text;
+    }
+    const outSec = outputSection();
+    const outTa = outputTextarea();
+    if (outSec) {
+      outSec.style.display = 'none';
+    }
+    if (outTa) {
+      outTa.value = '';
+    }
+    const err = errorEl();
+    if (err) {
+      err.style.display = 'none';
+      err.textContent = '';
+    }
 
-      const cellPos = getActiveCellPosition();
+    popover.style.display = 'block';
 
-      popover.style.top = cellPos.y + 'px';
-      popover.style.left = Math.min(cellPos.x, window.innerWidth - (popover.offsetWidth || 400) - 16) + 'px';
+    const pad = 12;
+    const pw = popover.offsetWidth || 380;
+    const ph = popover.offsetHeight || 280;
+    let left = anchorClientX + pad;
+    let top = anchorClientY + pad;
+    left = Math.max(pad, Math.min(left, window.innerWidth - pw - pad));
+    top = Math.max(pad, Math.min(top, window.innerHeight - ph - pad));
+    popover.style.left = `${left}px`;
+    popover.style.top = `${top}px`;
 
-      const src = sourceTextarea();
-      if (src) {
-        src.value = content;
-      }
-      const outSec = outputSection();
-      const outTa = outputTextarea();
-      if (outSec) {
-        outSec.style.display = 'none';
-      }
-      if (outTa) {
-        outTa.value = '';
-      }
-      const err = errorEl();
-      if (err) {
-        err.style.display = 'none';
-        err.textContent = '';
-      }
+    console.log('[GS] Popover opened at', left, top, 'content length:', text.length);
+  };
 
-      console.log('[GS] Popover positioned at:', cellPos);
+  const showGsFocusTranslateButton = (clientX, clientY, cellText) => {
+    removeGsFocusTranslateButton();
 
-      popover.style.display = 'block';
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'translator-gs-focus-btn';
+    btn.textContent = '🌐 Dịch';
+    btn.style.cssText = `
+      position: fixed;
+      z-index: 2147483646;
+      left: 0;
+      top: 0;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      border: none;
+      border-radius: 6px;
+      padding: 6px 10px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      box-shadow: 0 3px 8px rgba(0,0,0,0.22);
+    `;
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const text = getCellContent() || cellText || '';
+      openGsPopoverWithContent(text, clientX, clientY);
+      removeGsFocusTranslateButton();
+    });
+
+    document.body.appendChild(btn);
+
+    const pad = 8;
+    const rect = btn.getBoundingClientRect();
+    let left = clientX + 10;
+    let top = clientY + 8;
+    if (left + rect.width > window.innerWidth - pad) {
+      left = window.innerWidth - rect.width - pad;
+    }
+    if (top + rect.height > window.innerHeight - pad) {
+      top = window.innerHeight - rect.height - pad;
+    }
+    btn.style.left = `${Math.max(pad, left)}px`;
+    btn.style.top = `${Math.max(pad, top)}px`;
+
+    gsFocusTranslateBtn = btn;
+  };
+
+  const updateFocusTranslateButton = () => {
+    const text = (getCellContent() || '').trim();
+    if (text) {
+      showGsFocusTranslateButton(gsLastFocusAnchor.x, gsLastFocusAnchor.y, text);
+    } else {
+      removeGsFocusTranslateButton();
     }
   };
-  
-  // Listen for keyboard events (arrow keys navigate cells)
+
+  document.addEventListener('click', (e) => {
+    if (popover.contains(e.target) || (gsFocusTranslateBtn && gsFocusTranslateBtn.contains(e.target))) {
+      return;
+    }
+    const inGrid = e.target.closest('.grid-container') || e.target.closest('[data-spreadsheet-id]');
+    if (!inGrid) {
+      removeGsFocusTranslateButton();
+      return;
+    }
+    gsLastFocusAnchor = { x: e.clientX, y: e.clientY };
+    setTimeout(updateFocusTranslateButton, 60);
+  }, true);
+
   document.addEventListener('keydown', (e) => {
     if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter', 'Tab'].includes(e.key)) {
-      setTimeout(monitorCellContent, 100);
+      setTimeout(updateFocusTranslateButton, 90);
     }
-  });
-  
-  // Listen for click events on the grid
-  document.addEventListener('click', (e) => {
-    // Check if clicking inside grid container
-    if (e.target.closest('.grid-container') || e.target.closest('[data-spreadsheet-id]')) {
-      setTimeout(monitorCellContent, 50);
+    if (e.key === 'Escape') {
+      removeGsFocusTranslateButton();
     }
   }, true);
-  
-  // Monitor input changes in any input fields or contenteditable areas
+
   document.addEventListener('input', () => {
-    monitorCellContent();
+    setTimeout(updateFocusTranslateButton, 40);
   }, true);
-  
-  // Use MutationObserver to watch for changes in the document
-  const observer = new MutationObserver(() => {
-    monitorCellContent();
-  });
-  
-  observer.observe(document.body, {
-    childList: true,
-    subtree: true,
-    attributes: true,
-    characterData: true,
-    attributeFilter: ['aria-label', 'data-value', 'value'],
-    characterDataOldValue: false
-  });
   
   // =========================
   // Dragging functionality
@@ -977,7 +1012,6 @@ function injectGoogleSheetsTranslation() {
   popover.querySelector('#translator-gs-close').addEventListener('click', () => {
     popover.style.display = 'none';
     currentCellContent = '';
-    lastInputValue = '';
     const src = sourceTextarea();
     if (src) {
       src.value = '';
@@ -1694,10 +1728,23 @@ function displayEditorTranslationPreview(editor, original, translation) {
     border-radius: 4px;
     font-size: 13px;
     color: #2e7d32;
+    max-height: min(50vh, 420px);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-height: 0;
   `;
 
   resultDiv.innerHTML = `
     <style>
+      .translator-editor-result__body {
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow-x: hidden;
+        overflow-y: auto;
+        overscroll-behavior: auto;
+        -webkit-overflow-scrolling: touch;
+      }
       .translator-editor-result h1 {
         font-size: 24px;
         font-weight: bold;
@@ -1791,7 +1838,7 @@ function displayEditorTranslationPreview(editor, original, translation) {
         font-weight: bold;
       }
     </style>
-    <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-weight: 600; margin-bottom: 6px;">
+    <div style="flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-weight: 600; margin-bottom: 6px;">
       <span>📝 Bản dịch:</span>
       <span style="display: flex; align-items: center; gap: 6px;">
         <button type="button" class="copy-trans-btn-editor" style="
@@ -1814,7 +1861,7 @@ function displayEditorTranslationPreview(editor, original, translation) {
         ">✕ Đóng</button>
       </span>
     </div>
-    <div style="margin-top: 6px;">${formattedTranslation}</div>
+    <div class="translator-editor-result__body" style="margin-top: 6px;">${formattedTranslation}</div>
   `;
 
   // Copy button handler
