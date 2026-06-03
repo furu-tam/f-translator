@@ -41,15 +41,6 @@ const DEFAULT_ENABLED_PLATFORMS = {
   excel: true
 };
 
-const PLATFORMS_WITHOUT_DOMAIN = new Set(['github', 'excel']);
-
-function normalizeChannelPlatform(platform) {
-  if (!platform) return null;
-  const key = String(platform).toLowerCase().trim();
-  if (key === 'git') return 'github';
-  return key;
-}
-
 let extensionContextInvalidated = false;
 let extensionContextWarningShown = false;
 
@@ -228,9 +219,8 @@ function normalizeGlobalSettings(settings = {}) {
 // Get channel settings matching current platform/domain
 async function getMatchingChannelSettings() {
   const { platform, domain } = detectCurrentPlatform();
-  const normPlatform = normalizeChannelPlatform(platform);
-
-  if (!normPlatform) {
+  
+  if (!platform) {
     return null;
   }
 
@@ -240,89 +230,36 @@ async function getMatchingChannelSettings() {
   }
 
   const channels = Array.isArray(data.channelSettings) ? data.channelSettings : [];
-  const samePlatform = (ch) => normalizeChannelPlatform(ch.platform) === normPlatform;
 
-  if (domain) {
-    const exactMatch = channels.find((ch) =>
-      samePlatform(ch) && (ch.domain || null) === (domain || null)
-    );
-
-    if (exactMatch) {
-      return exactMatch;
-    }
+  const exactMatch = channels.find((ch) =>
+    ch.platform === platform && (ch.domain || null) === (domain || null)
+  );
+  
+  if (exactMatch) {
+    console.log('[Channel] Exact match found:', exactMatch);
+    return exactMatch;
   }
-
-  if (PLATFORMS_WITHOUT_DOMAIN.has(normPlatform)) {
-    const platformMatch = channels.find(samePlatform);
-    if (platformMatch) {
-      return platformMatch;
-    }
-  } else {
-    const platformMatch = channels.find((ch) => samePlatform(ch) && !ch.domain);
-    if (platformMatch) {
-      return platformMatch;
-    }
+  
+  const platformMatch = channels.find((ch) =>
+    ch.platform === platform && !ch.domain
+  );
+  
+  if (platformMatch) {
+    console.log('[Channel] Platform match found:', platformMatch);
+    return platformMatch;
   }
-
+  
+  console.log('[Channel] No matching settings found for', platform);
   return null;
-}
-
-async function getMissingTranslationSettingsMessage() {
-  const { platform } = detectCurrentPlatform();
-  const normPlatform = normalizeChannelPlatform(platform);
-
-  if (!normPlatform) {
-    return '❌ Trang này chưa được hỗ trợ dịch';
-  }
-
-  const storageData = await safeStorageLocalGet([
-    'globalSettings',
-    'provider',
-    'claudeKey',
-    'openaiKey',
-    'geminiKey',
-    'openaiModel',
-    'geminiModel',
-    'customInstruction',
-    'globalPlatformSettings'
-  ]);
-
-  if (!storageData) {
-    return '❌ Extension chưa sẵn sàng — reload extension và tải lại trang';
-  }
-
-  const globalSettings = storageData.globalSettings
-    ? normalizeGlobalSettings(storageData.globalSettings)
-    : buildGlobalSettingsFromLegacy(storageData);
-  const channelSettings = await getMatchingChannelSettings();
-
-  if (channelSettings) {
-    if (channelSettings.enabled === false) {
-      return '❌ Channel cho platform này đang tắt — bật lại trong popup';
-    }
-    return '❌ Channel thiếu API key hoặc model — kiểm tra Channel Settings';
-  }
-
-  if (!globalSettings.enabledPlatforms[normPlatform]) {
-    const label = normPlatform === 'github' ? 'Git' : normPlatform;
-    return `❌ Platform ${label} đang tắt — bật trong Global Settings → Platform On/Off`;
-  }
-
-  if (!globalSettings.apiKey) {
-    return '❌ Chưa có API key — mở popup → Global Settings → nhập key và Lưu';
-  }
-
-  return '❌ Không lấy được cấu hình dịch — reload extension';
 }
 
 // Get effective settings for the current platform.
 // Priority: matching channel -> global settings.
 async function getEffectiveSettings() {
   const current = detectCurrentPlatform();
-  const { platform } = current;
-  const normPlatform = normalizeChannelPlatform(platform);
+  const { platform, domain } = current;
 
-  if (!normPlatform) {
+  if (!platform) {
     return null;
   }
 
@@ -348,18 +285,17 @@ async function getEffectiveSettings() {
 
   if (channelSettings) {
     if (channelSettings.enabled === false) {
-      console.warn('[Translator] Channel disabled for', normPlatform);
+      console.log('[Channel] Matching channel is disabled:', channelSettings);
       return null;
     }
 
     if (!channelSettings.provider || !channelSettings.apiKey || !channelSettings.model) {
-      console.warn('[Translator] Channel incomplete for', normPlatform);
+      console.log('[Channel] Incomplete detailed settings for', platform, domain || '(global)');
       return null;
     }
 
     return {
       ...current,
-      platform: normPlatform,
       provider: channelSettings.provider,
       apiKey: channelSettings.apiKey,
       model: channelSettings.model,
@@ -369,19 +305,18 @@ async function getEffectiveSettings() {
     };
   }
 
-  if (!globalSettings.enabledPlatforms[normPlatform]) {
-    console.warn('[Translator] Platform disabled in Global Settings:', normPlatform);
+  if (!globalSettings.enabledPlatforms[platform]) {
+    console.log('[Global] Platform is disabled globally:', platform);
     return null;
   }
 
   if (!globalSettings.provider || !globalSettings.apiKey || !globalSettings.model) {
-    console.warn('[Translator] Global settings incomplete for', normPlatform);
+    console.log('[Global] Missing or incomplete global settings for', platform);
     return null;
   }
 
   return {
     ...current,
-    platform: normPlatform,
     provider: globalSettings.provider,
     apiKey: globalSettings.apiKey,
     model: globalSettings.model,
@@ -495,89 +430,6 @@ function injectBacklogTranslateButtons() {
   });
 }
 
-function getGitHubCommentTargets() {
-  const targets = [];
-  document.querySelectorAll('.markdown-body').forEach((contentEl) => {
-    const container = contentEl.closest('[data-testid="issue-comment-viewer"], .Box-row, [class*="Comment"]');
-    if (!container) return;
-    const text = contentEl.innerText?.trim();
-    if (!text || text.length < 5) return;
-    targets.push({
-      contentEl,
-      text,
-      button: contentEl.querySelector('.translator-btn')
-    });
-  });
-  return targets;
-}
-
-let gitHubBatchTranslating = false;
-
-async function translateAllGitHubComments(triggerContentEl) {
-  if (gitHubBatchTranslating) return;
-
-  const targets = getGitHubCommentTargets();
-  if (targets.length === 0) {
-    showErr(triggerContentEl, '❌ No content to translate');
-    return;
-  }
-
-  const settings = await getEffectiveSettings();
-  if (!settings || !settings.apiKey) {
-    showErr(triggerContentEl, await getMissingTranslationSettingsMessage());
-    return;
-  }
-
-  gitHubBatchTranslating = true;
-  targets.forEach(({ button }) => {
-    if (button) {
-      button.disabled = true;
-      button.innerHTML = '⏳ Dịch...';
-    }
-  });
-
-  try {
-    const contextData = await safeStorageLocalGet(['includeTicketContext']);
-    const includeContext = contextData ? contextData.includeTicketContext !== false : false;
-    const context = includeContext ? collectIssueContext() : '';
-
-    for (const { contentEl, text, button } of targets) {
-      const result = await safeRuntimeSendMessage({
-        type: 'TRANSLATE_TEXT',
-        text: text,
-        provider: settings.provider,
-        apiKey: settings.apiKey,
-        model: settings.model,
-        customInstruction: settings.customInstruction || '',
-        context: context
-      });
-
-      if (button) {
-        button.disabled = false;
-        button.innerHTML = '🌐 Dịch';
-      }
-
-      if (!result.ok) {
-        if (!result.invalidated) {
-          showErr(contentEl, `❌ Lỗi: ${result.error}`);
-        }
-        continue;
-      }
-
-      const response = result.response;
-      if (response && response.success) {
-        displayTranslation(contentEl, text, response.translation);
-      } else if (response && response.error) {
-        showErr(contentEl, `❌ Lỗi: ${response.error}`);
-      } else {
-        showErr(contentEl, '❌ Lỗi: No response from background script');
-      }
-    }
-  } finally {
-    gitHubBatchTranslating = false;
-  }
-}
-
 // Inject translate buttons for GitHub comments
 function injectGitHubTranslateButtons() {
   // Find comment containers by looking for markdown-body within comment items
@@ -629,7 +481,12 @@ function injectGitHubTranslateButtons() {
     button.addEventListener('click', async (e) => {
       e.preventDefault();
       e.stopPropagation();
-      translateAllGitHubComments(contentEl);
+      const commentText = contentEl.innerText?.trim();
+      if (!commentText) {
+        showErr(contentEl, '❌ No content to translate');
+        return;
+      }
+      translateComment(contentEl, commentText, button);
     });
     
     // Append button after markdown content
@@ -1353,7 +1210,7 @@ async function translateComment(contentEl, text, button) {
   const settings = await getEffectiveSettings();
   
   if (!settings || !settings.apiKey) {
-    showErr(contentEl, await getMissingTranslationSettingsMessage());
+    showErr(contentEl, '❌ Vui lòng cấu hình channel chi tiết cho platform này');
     return;
   }
 
