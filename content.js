@@ -248,7 +248,6 @@ async function getMatchingChannelSettings() {
     );
 
     if (exactMatch) {
-      console.log('[Channel] Exact match found:', exactMatch);
       return exactMatch;
     }
   }
@@ -256,18 +255,15 @@ async function getMatchingChannelSettings() {
   if (PLATFORMS_WITHOUT_DOMAIN.has(normPlatform)) {
     const platformMatch = channels.find(samePlatform);
     if (platformMatch) {
-      console.log('[Channel] Platform match found:', platformMatch);
       return platformMatch;
     }
   } else {
     const platformMatch = channels.find((ch) => samePlatform(ch) && !ch.domain);
     if (platformMatch) {
-      console.log('[Channel] Platform match found:', platformMatch);
       return platformMatch;
     }
   }
 
-  console.debug('[Channel] No channel for', normPlatform, '— fallback to global settings');
   return null;
 }
 
@@ -323,9 +319,10 @@ async function getMissingTranslationSettingsMessage() {
 // Priority: matching channel -> global settings.
 async function getEffectiveSettings() {
   const current = detectCurrentPlatform();
-  const { platform, domain } = current;
+  const { platform } = current;
+  const normPlatform = normalizeChannelPlatform(platform);
 
-  if (!platform) {
+  if (!normPlatform) {
     return null;
   }
 
@@ -351,17 +348,18 @@ async function getEffectiveSettings() {
 
   if (channelSettings) {
     if (channelSettings.enabled === false) {
-      console.log('[Channel] Matching channel is disabled:', channelSettings);
+      console.warn('[Translator] Channel disabled for', normPlatform);
       return null;
     }
 
     if (!channelSettings.provider || !channelSettings.apiKey || !channelSettings.model) {
-      console.log('[Channel] Incomplete detailed settings for', platform, domain || '(global)');
+      console.warn('[Translator] Channel incomplete for', normPlatform);
       return null;
     }
 
     return {
       ...current,
+      platform: normPlatform,
       provider: channelSettings.provider,
       apiKey: channelSettings.apiKey,
       model: channelSettings.model,
@@ -371,18 +369,19 @@ async function getEffectiveSettings() {
     };
   }
 
-  if (!globalSettings.enabledPlatforms[platform]) {
-    console.log('[Global] Platform is disabled globally:', platform);
+  if (!globalSettings.enabledPlatforms[normPlatform]) {
+    console.warn('[Translator] Platform disabled in Global Settings:', normPlatform);
     return null;
   }
 
   if (!globalSettings.provider || !globalSettings.apiKey || !globalSettings.model) {
-    console.log('[Global] Missing or incomplete global settings for', platform);
+    console.warn('[Translator] Global settings incomplete for', normPlatform);
     return null;
   }
 
   return {
     ...current,
+    platform: normPlatform,
     provider: globalSettings.provider,
     apiKey: globalSettings.apiKey,
     model: globalSettings.model,
