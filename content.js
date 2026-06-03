@@ -430,6 +430,87 @@ function injectBacklogTranslateButtons() {
   });
 }
 
+function getGitHubCommentTargets() {
+  const targets = [];
+  document.querySelectorAll('.markdown-body').forEach((contentEl) => {
+    const container = contentEl.closest('[data-testid="issue-comment-viewer"], .Box-row, [class*="Comment"]');
+    if (!container) return;
+    const text = contentEl.innerText?.trim();
+    if (!text || text.length < 5) return;
+    targets.push({
+      contentEl,
+      text,
+      button: contentEl.querySelector('.translator-btn')
+    });
+  });
+  return targets;
+}
+
+let gitHubBatchTranslating = false;
+
+async function translateAllGitHubComments(triggerContentEl) {
+  if (gitHubBatchTranslating) return;
+
+  const targets = getGitHubCommentTargets();
+  if (targets.length === 0) {
+    showErr(triggerContentEl, '❌ No content to translate');
+    return;
+  }
+
+  const settings = await getEffectiveSettings();
+  if (!settings || !settings.apiKey) {
+    showErr(triggerContentEl, '❌ Vui lòng cấu hình channel chi tiết cho platform này');
+    return;
+  }
+
+  gitHubBatchTranslating = true;
+  targets.forEach(({ button }) => {
+    if (button) {
+      button.disabled = true;
+      button.innerHTML = '⏳ Dịch...';
+    }
+  });
+
+  const contextData = await safeStorageLocalGet(['includeTicketContext']);
+  const includeContext = contextData ? contextData.includeTicketContext !== false : false;
+  const context = includeContext ? collectIssueContext() : '';
+
+  for (const { contentEl, text, button } of targets) {
+    const result = await safeRuntimeSendMessage({
+      type: 'TRANSLATE_TEXT',
+      text: text,
+      provider: settings.provider,
+      apiKey: settings.apiKey,
+      model: settings.model,
+      customInstruction: settings.customInstruction || '',
+      context: context
+    });
+
+    if (button) {
+      button.disabled = false;
+      button.innerHTML = '🌐 Dịch';
+    }
+
+    if (!result.ok) {
+      if (!result.invalidated) {
+        showErr(contentEl, `❌ Lỗi: ${result.error}`);
+      }
+      continue;
+    }
+
+    const response = result.response;
+    if (response && response.success) {
+      displayTranslation(contentEl, text, response.translation);
+    } else if (response && response.error) {
+      showErr(contentEl, `❌ Lỗi: ${response.error}`);
+    } else {
+      showErr(contentEl, '❌ Lỗi: No response from background script');
+    }
+  }
+
+  gitHubBatchTranslating = false;
+}
+
 // Inject translate buttons for GitHub comments
 function injectGitHubTranslateButtons() {
   // Find comment containers by looking for markdown-body within comment items
@@ -481,12 +562,7 @@ function injectGitHubTranslateButtons() {
     button.addEventListener('click', async (e) => {
       e.preventDefault();
       e.stopPropagation();
-      const commentText = contentEl.innerText?.trim();
-      if (!commentText) {
-        showErr(contentEl, '❌ No content to translate');
-        return;
-      }
-      translateComment(contentEl, commentText, button);
+      translateAllGitHubComments(contentEl);
     });
     
     // Append button after markdown content
