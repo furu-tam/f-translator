@@ -430,6 +430,114 @@ function injectBacklogTranslateButtons() {
   });
 }
 
+function getGitHubRelatedCommentScope(contentEl) {
+  return contentEl.closest(
+    '.review-thread-collapsible, .js-resolvable-timeline-thread-container, review-thread-collapsible, [id^="review-thread-or-comment-id-"]'
+  ) || contentEl.closest('.TimelineItem-body');
+}
+
+function isGitHubTranslatableComment(contentEl) {
+  if (contentEl.closest('#issue-body-viewer')) return false;
+  const text = contentEl.innerText?.trim();
+  return Boolean(text && text.length >= 5);
+}
+
+function getGitHubCommentTargets(scopeRoot, triggerContentEl) {
+  const markdownBodies = scopeRoot
+    ? scopeRoot.querySelectorAll('.markdown-body')
+    : [triggerContentEl];
+  const targets = [];
+  const seen = new Set();
+
+  markdownBodies.forEach((contentEl) => {
+    if (seen.has(contentEl) || !isGitHubTranslatableComment(contentEl)) return;
+
+    if (!scopeRoot) {
+      const container = contentEl.closest(
+        '[data-testid="issue-comment-viewer"], .Box-row, [class*="Comment"], .js-comment-container'
+      );
+      if (!container) return;
+    }
+
+    seen.add(contentEl);
+    targets.push({
+      contentEl,
+      text: contentEl.innerText.trim(),
+      button: contentEl.querySelector('.translator-btn')
+    });
+  });
+
+  return targets;
+}
+
+let gitHubBatchTranslating = false;
+
+async function translateAllGitHubRelatedComments(triggerContentEl) {
+  if (gitHubBatchTranslating) return;
+
+  const scopeRoot = getGitHubRelatedCommentScope(triggerContentEl);
+  const targets = getGitHubCommentTargets(scopeRoot, triggerContentEl);
+  if (targets.length === 0) {
+    showErr(triggerContentEl, '❌ No content to translate');
+    return;
+  }
+
+  const settings = await getEffectiveSettings();
+  if (!settings || !settings.apiKey) {
+    showErr(triggerContentEl, '❌ Vui lòng cấu hình channel chi tiết cho platform này');
+    return;
+  }
+
+  gitHubBatchTranslating = true;
+  targets.forEach(({ button }) => {
+    if (button) {
+      button.disabled = true;
+      button.innerHTML = '⏳ Dịch...';
+    }
+  });
+
+  try {
+    const contextData = await safeStorageLocalGet(['includeTicketContext']);
+    const includeContext = contextData ? contextData.includeTicketContext !== false : false;
+    const context = includeContext ? collectIssueContext() : '';
+
+    for (const { contentEl, text, button } of targets) {
+      const result = await safeRuntimeSendMessage({
+        type: 'TRANSLATE_TEXT',
+        text: text,
+        provider: settings.provider,
+        apiKey: settings.apiKey,
+        model: settings.model,
+        customInstruction: settings.customInstruction || '',
+        context: context
+      });
+
+      if (button) {
+        button.disabled = false;
+        button.innerHTML = '🌐 Dịch';
+      }
+
+      if (!result.ok) {
+        if (!result.invalidated) {
+          showErr(contentEl, `❌ Lỗi: ${result.error}`);
+        }
+        continue;
+      }
+
+      const response = result.response;
+      if (response && response.success) {
+        displayTranslation(contentEl, text, response.translation);
+      } else if (response && response.error) {
+        showErr(contentEl, `❌ Lỗi: ${response.error}`);
+      } else {
+        showErr(contentEl, '❌ Lỗi: No response from background script');
+      }
+    }
+  } finally {
+    gitHubBatchTranslating = false;
+  }
+}
+
 // Inject translate buttons for GitHub comments
 function injectGitHubTranslateButtons() {
   // Find comment containers by looking for markdown-body within comment items
@@ -442,8 +550,10 @@ function injectGitHubTranslateButtons() {
     }
     
     // Get the parent comment container
-    const container = contentEl.closest('[data-testid="issue-comment-viewer"], .Box-row, [class*="Comment"]');
-    if (!contentEl) return;
+    const container = contentEl.closest(
+      '[data-testid="issue-comment-viewer"], .Box-row, [class*="Comment"], .js-comment-container'
+    );
+    if (contentEl.closest('#issue-body-viewer') || !container) return;
     
     const text = contentEl.innerText?.trim();
     if (!text || text.length < 5) {
@@ -486,7 +596,7 @@ function injectGitHubTranslateButtons() {
         showErr(contentEl, '❌ No content to translate');
         return;
       }
-      translateComment(contentEl, commentText, button);
+      translateAllGitHubRelatedComments(contentEl);
     });
     
     // Append button after markdown content
