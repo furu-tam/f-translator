@@ -1,10 +1,11 @@
 const statusEl = document.getElementById('status');
-const platformOrder = ['backlog', 'github', 'jira', 'excel'];
+const platformOrder = ['backlog', 'github', 'jira', 'excel', 'slack'];
 const platformLabels = {
   backlog: 'Backlog',
   github: 'Git',
   jira: 'Jira',
-  excel: 'Excel'
+  excel: 'Excel',
+  slack: 'Slack'
 };
 const platformsWithDomain = ['backlog', 'jira'];
 const providerModels = {
@@ -45,7 +46,8 @@ function getDefaultEnabledPlatforms() {
     backlog: true,
     github: true,
     jira: true,
-    excel: true
+    excel: true,
+    slack: true
   };
 }
 

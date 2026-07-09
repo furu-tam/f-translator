@@ -38,7 +38,8 @@ const DEFAULT_ENABLED_PLATFORMS = {
   backlog: true,
   github: true,
   jira: true,
-  excel: true
+  excel: true,
+  slack: true
 };
 
 let extensionContextInvalidated = false;
@@ -158,6 +159,12 @@ function detectCurrentPlatform() {
   }
   if (url.includes('docs.google.com/spreadsheets')) {
     return { platform: 'excel', domain: null };
+  }
+  if (hostname === 'app.slack.com' || hostname.endsWith('.slack.com')) {
+    return {
+      platform: 'slack',
+      domain: hostname === 'app.slack.com' ? null : hostname
+    };
   }
 
   return { platform: null, domain: null };
@@ -348,6 +355,9 @@ async function injectTranslateButtons() {
       break;
     case 'excel':
       injectGoogleSheetsTranslation();
+      break;
+    case 'slack':
+      injectSlackTranslateButtons();
       break;
     default:
       break;
@@ -551,7 +561,7 @@ function injectGitHubTranslateButtons() {
     
     // Get the parent comment container
     const container = contentEl.closest(
-      '[data-testid="issue-comment-viewer"], .Box-row, [class*="Comment"], .js-comment-container'
+      '.TimelineItem, [data-testid="issue-comment-viewer"], .Box-row, [class*="Comment"], .js-comment-container'
     );
     if (contentEl.closest('#issue-body-viewer') || !container) return;
     
@@ -662,6 +672,94 @@ function injectJiraTranslateButtons() {
     });
     
     commentEl.appendChild(button);
+  });
+}
+
+function getSlackMessageButton(contentEl) {
+  const blocksWrapper = contentEl.closest('.c-message_kit__blocks');
+  if (blocksWrapper?.nextElementSibling?.classList?.contains('translator-btn')) {
+    return blocksWrapper.nextElementSibling;
+  }
+  return contentEl.querySelector('.translator-btn');
+}
+
+function getSlackMessageTargets() {
+  const targets = [];
+  const seen = new Set();
+
+  document.querySelectorAll('[data-qa="message-text"]').forEach((contentEl) => {
+    if (seen.has(contentEl)) return;
+
+    const messageRoot = contentEl.closest(
+      '.c-message_kit__message, [data-qa="message_container"], .c-message_kit__hover'
+    );
+    if (!messageRoot || messageRoot.querySelector('.c-message_kit__tombstone')) return;
+
+    const text = contentEl.innerText?.trim();
+    if (!text || text.length < 5) return;
+
+    seen.add(contentEl);
+    targets.push({
+      contentEl,
+      text,
+      button: getSlackMessageButton(contentEl)
+    });
+  });
+
+  return targets;
+}
+
+function injectSlackTranslateButtons() {
+  getSlackMessageTargets().forEach(({ contentEl, text, button: existingButton }) => {
+    if (existingButton) return;
+
+    const button = document.createElement('button');
+    button.className = 'translator-btn';
+    button.type = 'button';
+    button.innerHTML = '🌐 Dịch';
+    button.title = 'Dịch tin nhắn';
+    button.style.cssText = `
+      display: inline-flex;
+      align-items: center;
+      background: linear-gradient(135deg, #611f69 0%, #4a154b 100%);
+      color: white;
+      border: none;
+      padding: 4px 10px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 600;
+      margin-top: 8px;
+      transition: all 0.2s ease;
+    `;
+
+    button.addEventListener('mouseover', () => {
+      button.style.opacity = '0.9';
+      button.style.transform = 'translateY(-1px)';
+    });
+
+    button.addEventListener('mouseout', () => {
+      button.style.opacity = '1';
+      button.style.transform = 'translateY(0)';
+    });
+
+    button.addEventListener('click', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const commentText = contentEl.innerText?.trim();
+      if (!commentText) {
+        showErr(contentEl, '❌ Không tìm thấy nội dung để dịch');
+        return;
+      }
+      translateComment(contentEl, commentText, button);
+    });
+
+    const blocksWrapper = contentEl.closest('.c-message_kit__blocks');
+    if (blocksWrapper?.parentElement) {
+      blocksWrapper.parentElement.insertBefore(button, blocksWrapper.nextSibling);
+    } else {
+      contentEl.appendChild(button);
+    }
   });
 }
 
