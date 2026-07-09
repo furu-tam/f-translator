@@ -675,6 +675,71 @@ function injectJiraTranslateButtons() {
   });
 }
 
+function ensureSlackTranslatorStyles() {
+  if (document.getElementById('translator-slack-styles')) return;
+
+  const style = document.createElement('style');
+  style.id = 'translator-slack-styles';
+  style.textContent = `
+    .translator-slack-msg-btn {
+      display: none !important;
+    }
+    .c-message_kit__hover:hover .translator-slack-msg-btn,
+    .c-message_kit__message:hover .translator-slack-msg-btn,
+    [data-qa="message_container"]:hover .translator-slack-msg-btn,
+    .c-message_kit__hover:focus-within .translator-slack-msg-btn,
+    .c-message_kit__message:focus-within .translator-slack-msg-btn,
+    [data-qa="message_container"]:focus-within .translator-slack-msg-btn,
+    .translator-slack-msg-btn.translator-btn--pinned {
+      display: inline-flex !important;
+    }
+    .translator-slack-input-controls {
+      display: none;
+    }
+    .translator-slack-input-controls.is-visible {
+      display: flex;
+    }
+  `;
+  document.head.appendChild(style);
+}
+
+function setSlackMessageButtonPinned(button, contentEl, pinned) {
+  if (!button) return;
+  if (pinned) {
+    button.classList.add('translator-btn--pinned');
+    return;
+  }
+  if (!contentEl?.querySelector('.translator-result')) {
+    button.classList.remove('translator-btn--pinned');
+  }
+}
+
+function bindSlackInputControlsVisibility(editor, inputContainer, controlsDiv, composer) {
+  let hideTimer;
+
+  const showControls = () => {
+    clearTimeout(hideTimer);
+    controlsDiv.classList.add('is-visible');
+  };
+
+  const hideControls = () => {
+    clearTimeout(hideTimer);
+    hideTimer = setTimeout(() => {
+      if (controlsDiv.contains(document.activeElement)) return;
+      if (editor === document.activeElement) return;
+      if (composer.querySelector('[data-translator-slack-preview="true"]')) return;
+      controlsDiv.classList.remove('is-visible');
+    }, 180);
+  };
+
+  editor.addEventListener('focus', showControls);
+  inputContainer.addEventListener('focusin', showControls);
+  controlsDiv.addEventListener('focusin', showControls);
+  editor.addEventListener('blur', hideControls);
+  controlsDiv.addEventListener('focusout', hideControls);
+  inputContainer.addEventListener('focusout', hideControls);
+}
+
 function getSlackMessageButton(contentEl) {
   const blocksWrapper = contentEl.closest('.c-message_kit__blocks');
   if (blocksWrapper?.nextElementSibling?.classList?.contains('translator-btn')) {
@@ -710,16 +775,20 @@ function getSlackMessageTargets() {
 }
 
 function injectSlackTranslateButtons() {
-  getSlackMessageTargets().forEach(({ contentEl, text, button: existingButton }) => {
-    if (existingButton) return;
+  ensureSlackTranslatorStyles();
+
+  getSlackMessageTargets().forEach(({ contentEl, button: existingButton }) => {
+    if (existingButton) {
+      setSlackMessageButtonPinned(existingButton, contentEl, !!contentEl.querySelector('.translator-result'));
+      return;
+    }
 
     const button = document.createElement('button');
-    button.className = 'translator-btn';
+    button.className = 'translator-btn translator-slack-msg-btn';
     button.type = 'button';
     button.innerHTML = '🌐 Dịch';
     button.title = 'Dịch tin nhắn';
     button.style.cssText = `
-      display: inline-flex;
       align-items: center;
       background: linear-gradient(135deg, #611f69 0%, #4a154b 100%);
       color: white;
@@ -751,7 +820,9 @@ function injectSlackTranslateButtons() {
         showErr(contentEl, '❌ Không tìm thấy nội dung để dịch');
         return;
       }
-      translateComment(contentEl, commentText, button);
+      setSlackMessageButtonPinned(button, contentEl, true);
+      await translateComment(contentEl, commentText, button);
+      setSlackMessageButtonPinned(button, contentEl, !!contentEl.querySelector('.translator-result'));
     });
 
     const blocksWrapper = contentEl.closest('.c-message_kit__blocks');
@@ -782,6 +853,8 @@ function setSlackEditorText(editor, text) {
 }
 
 function injectSlackMessageInputTranslation() {
+  ensureSlackTranslatorStyles();
+
   document.querySelectorAll('[data-qa="message_input"]').forEach((inputContainer) => {
     const editor = inputContainer.querySelector('[data-qa="texty_input"][contenteditable="true"]');
     if (!editor) return;
@@ -797,9 +870,9 @@ function injectSlackMessageInputTranslation() {
     ) || insertionPoint;
 
     const controlsDiv = document.createElement('div');
+    controlsDiv.className = 'translator-slack-input-controls';
     controlsDiv.setAttribute('data-translator-slack-input', 'true');
     controlsDiv.style.cssText = `
-      display: flex;
       gap: 8px;
       align-items: center;
       padding: 8px 12px;
@@ -863,6 +936,7 @@ function injectSlackMessageInputTranslation() {
     controlsDiv.appendChild(langSelect);
     controlsDiv.appendChild(translateBtn);
     insertionPoint.insertBefore(controlsDiv, inputContainer);
+    bindSlackInputControlsVisibility(editor, inputContainer, controlsDiv, composer);
   });
 }
 
@@ -977,6 +1051,7 @@ function displaySlackMessageInputTranslationPreview(editor, composer, translatio
   resultDiv.querySelector('.apply-trans-btn-slack').addEventListener('click', () => {
     setSlackEditorText(editor, translation);
     resultDiv.remove();
+    editor.focus();
   });
 
   resultDiv.querySelector('.copy-trans-btn-slack').addEventListener('click', () => {
@@ -994,6 +1069,10 @@ function displaySlackMessageInputTranslationPreview(editor, composer, translatio
   });
 
   const inputContainer = composer.querySelector('[data-qa="message_input"]');
+  const inputControls = inputContainer?.previousElementSibling;
+  if (inputControls?.getAttribute('data-translator-slack-input') === 'true') {
+    inputControls.classList.add('is-visible');
+  }
   if (inputContainer?.parentElement) {
     inputContainer.parentElement.insertBefore(resultDiv, inputContainer);
   } else {
