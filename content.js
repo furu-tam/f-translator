@@ -763,6 +763,244 @@ function injectSlackTranslateButtons() {
   });
 }
 
+function getSlackEditorText(editor) {
+  return editor?.innerText?.trim() || '';
+}
+
+function setSlackEditorText(editor, text) {
+  if (!editor) return;
+
+  editor.focus();
+  const selection = window.getSelection();
+  const range = document.createRange();
+  range.selectNodeContents(editor);
+  selection.removeAllRanges();
+  selection.addRange(range);
+  document.execCommand('delete', false, null);
+  document.execCommand('insertText', false, text);
+  editor.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
+}
+
+function injectSlackMessageInputTranslation() {
+  document.querySelectorAll('[data-qa="message_input"]').forEach((inputContainer) => {
+    const editor = inputContainer.querySelector('[data-qa="texty_input"][contenteditable="true"]');
+    if (!editor) return;
+
+    const insertionPoint = inputContainer.parentElement;
+    if (!insertionPoint) return;
+    if (inputContainer.previousElementSibling?.getAttribute('data-translator-slack-input') === 'true') {
+      return;
+    }
+
+    const composer = inputContainer.closest(
+      '[data-qa="composer_body"], .p-composer, .c-wysiwyg_container, [class*="composer"]'
+    ) || insertionPoint;
+
+    const controlsDiv = document.createElement('div');
+    controlsDiv.setAttribute('data-translator-slack-input', 'true');
+    controlsDiv.style.cssText = `
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      padding: 8px 12px;
+      background: #f8f8f8;
+      border: 1px solid #e8e8e8;
+      border-radius: 8px;
+      margin-bottom: 8px;
+      flex-wrap: wrap;
+    `;
+
+    const langSelect = document.createElement('select');
+    langSelect.className = 'translator-slack-lang-select';
+    langSelect.style.cssText = `
+      padding: 6px 10px;
+      border: 1px solid #cfcfcf;
+      border-radius: 4px;
+      background: white;
+      font-size: 12px;
+      cursor: pointer;
+      min-width: 180px;
+    `;
+
+    const defaultOption = document.createElement('option');
+    defaultOption.value = '';
+    defaultOption.textContent = '📖 Chọn ngôn ngữ...';
+    langSelect.appendChild(defaultOption);
+
+    Object.entries(SUPPORTED_LANGUAGES).forEach(([code, name]) => {
+      const option = document.createElement('option');
+      option.value = code;
+      option.textContent = name;
+      langSelect.appendChild(option);
+    });
+    langSelect.value = 'vi';
+
+    const translateBtn = document.createElement('button');
+    translateBtn.type = 'button';
+    translateBtn.textContent = '🌐 Dịch';
+    translateBtn.style.cssText = `
+      background: linear-gradient(135deg, #611f69 0%, #4a154b 100%);
+      color: white;
+      border: none;
+      padding: 6px 14px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+      white-space: nowrap;
+    `;
+
+    translateBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!langSelect.value) {
+        alert('❌ Vui lòng chọn ngôn ngữ');
+        return;
+      }
+      translateSlackMessageInputContent(editor, langSelect.value, composer, translateBtn);
+    });
+
+    controlsDiv.appendChild(langSelect);
+    controlsDiv.appendChild(translateBtn);
+    insertionPoint.insertBefore(controlsDiv, inputContainer);
+  });
+}
+
+function translateSlackMessageInputContent(editor, language, composer, button) {
+  const text = getSlackEditorText(editor);
+  if (!text || text.length < 2) {
+    alert('❌ Vui lòng nhập nội dung cần dịch');
+    return;
+  }
+
+  button.disabled = true;
+  button.textContent = '⏳ Đang dịch...';
+
+  getRuntimeTranslationConfig(
+    language,
+    ' (Translate the draft message before sending. Preserve mentions, links, and formatting intent where possible.)'
+  ).then((config) => {
+    if (!config) {
+      button.disabled = false;
+      button.textContent = '🌐 Dịch';
+      alert('❌ Vui lòng cấu hình channel chi tiết cho platform này');
+      return;
+    }
+
+    safeRuntimeSendMessage({
+      type: 'TRANSLATE_TEXT',
+      text: text,
+      provider: config.provider,
+      apiKey: config.apiKey,
+      model: config.model,
+      customInstruction: config.translationInstruction,
+      context: config.context
+    }).then((result) => {
+      button.disabled = false;
+      button.textContent = '🌐 Dịch';
+
+      if (!result.ok) {
+        if (!result.invalidated) {
+          alert(`❌ Lỗi: ${result.error}`);
+        }
+        return;
+      }
+
+      const response = result.response;
+      if (response && response.success) {
+        displaySlackMessageInputTranslationPreview(editor, composer, response.translation);
+      } else if (response && response.error) {
+        alert(`❌ Lỗi: ${response.error}`);
+      } else {
+        alert('❌ Lỗi: No response from background script');
+      }
+    });
+  });
+}
+
+function displaySlackMessageInputTranslationPreview(editor, composer, translation) {
+  const existingPreview = composer.querySelector('[data-translator-slack-preview="true"]');
+  if (existingPreview) {
+    existingPreview.remove();
+  }
+
+  const formattedTranslation = formatTranslationText(translation);
+  const resultDiv = document.createElement('div');
+  resultDiv.setAttribute('data-translator-slack-preview', 'true');
+  resultDiv.style.cssText = `
+    background: #f4ecf7;
+    border: 1px solid #c9a3d1;
+    border-left: 4px solid #611f69;
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 8px;
+    font-size: 13px;
+    color: #3f0e40;
+  `;
+
+  resultDiv.innerHTML = `
+    <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-weight: 600; margin-bottom: 6px;">
+      <span>📝 Bản dịch:</span>
+      <span style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+        <button type="button" class="apply-trans-btn-slack" style="
+          background: #611f69;
+          border: 1px solid #611f69;
+          color: white;
+          padding: 2px 8px;
+          border-radius: 3px;
+          cursor: pointer;
+          font-size: 11px;
+        ">✅ Dùng bản dịch</button>
+        <button type="button" class="copy-trans-btn-slack" style="
+          background: white;
+          border: 1px solid #611f69;
+          color: #611f69;
+          padding: 2px 8px;
+          border-radius: 3px;
+          cursor: pointer;
+          font-size: 11px;
+        ">📋 Copy</button>
+        <button type="button" class="translator-close-result-btn" style="
+          background: white;
+          border: 1px solid #9e9e9e;
+          color: #616161;
+          padding: 2px 8px;
+          border-radius: 3px;
+          cursor: pointer;
+          font-size: 11px;
+        ">✕ Đóng</button>
+      </span>
+    </div>
+    <div class="translator-slack-input-result" style="margin-top: 6px;">${formattedTranslation}</div>
+  `;
+
+  resultDiv.querySelector('.apply-trans-btn-slack').addEventListener('click', () => {
+    setSlackEditorText(editor, translation);
+    resultDiv.remove();
+  });
+
+  resultDiv.querySelector('.copy-trans-btn-slack').addEventListener('click', () => {
+    navigator.clipboard.writeText(translation);
+    const copyBtn = resultDiv.querySelector('.copy-trans-btn-slack');
+    const originalText = copyBtn.textContent;
+    copyBtn.textContent = '✅ Copied!';
+    setTimeout(() => {
+      copyBtn.textContent = originalText;
+    }, 2000);
+  });
+
+  resultDiv.querySelector('.translator-close-result-btn').addEventListener('click', () => {
+    resultDiv.remove();
+  });
+
+  const inputContainer = composer.querySelector('[data-qa="message_input"]');
+  if (inputContainer?.parentElement) {
+    inputContainer.parentElement.insertBefore(resultDiv, inputContainer);
+  } else {
+    composer.insertBefore(resultDiv, composer.firstChild);
+  }
+}
+
 // Inject translate button for ticket descriptions
 function injectTicketDescriptionTranslateButton() {
   // Backlog/Jira ticket description
@@ -3047,6 +3285,9 @@ async function runInjectionCycle() {
       break;
     case 'jira':
       injectJiraCommentEditorTranslation();
+      break;
+    case 'slack':
+      injectSlackMessageInputTranslation();
       break;
     default:
       break;
