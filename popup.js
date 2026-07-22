@@ -200,6 +200,7 @@ function setupFormHandlers() {
   document.getElementById('saveGlobalBtn').addEventListener('click', saveGlobalSettings);
   document.getElementById('addChannelBtn').addEventListener('click', addChannel);
   document.getElementById('saveAutofillProfileBtn').addEventListener('click', saveAutofillSettings);
+  document.getElementById('formAutofillEnabled').addEventListener('change', saveAutofillEnabledOnly);
 }
 
 function updateProviderModelGroups(scope, provider) {
@@ -521,6 +522,18 @@ function loadAutofillSettings() {
       renderAutofillDomainList(data.formAutofillConfigs || {});
     }
   );
+}
+
+function saveAutofillEnabledOnly() {
+  const formAutofillEnabled = document.getElementById('formAutofillEnabled').checked;
+  chrome.storage.local.set({ formAutofillEnabled }, () => {
+    showStatus(
+      formAutofillEnabled
+        ? '✅ Đã bật Form Auto-fill (hiện lại sau khi reload trang)'
+        : '✅ Đã tắt Form Auto-fill (panel ẩn ngay)',
+      'success'
+    );
+  });
 }
 
 function saveAutofillSettings() {

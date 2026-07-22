@@ -31,6 +31,9 @@
   let savePromptShownFor = new Set();
   let aiSuggestInFlight = false;
   let initDone = false;
+  /** Ẩn panel trong phiên trang hiện tại (× hoặc tắt setting) — chỉ hiện lại khi reload. */
+  let panelHiddenThisLoad = false;
+  let panelShownThisLoad = false;
 
   /** Key cấu hình = full URL path (không gồm hash). */
   function urlPathKey() {
@@ -56,6 +59,19 @@
   function teardownAutofillUi() {
     document.getElementById(PANEL_ID)?.remove();
     document.getElementById(TOAST_ID)?.remove();
+  }
+
+  function canShowPanel() {
+    return (
+      settingsCache.enabled &&
+      !panelHiddenThisLoad &&
+      !isTranslationPrioritySite()
+    );
+  }
+
+  function hidePanelForThisPage() {
+    panelHiddenThisLoad = true;
+    teardownAutofillUi();
   }
 
   function normalizeLabel(text) {
@@ -491,9 +507,9 @@
   }
 
   function renderPanel() {
-    if (isTranslationPrioritySite()) {
+    if (!canShowPanel()) {
       teardownAutofillUi();
-      return;
+      return false;
     }
     ensureStyles();
     const urlKey = urlPathKey();
@@ -508,7 +524,7 @@
     panel.innerHTML = `
       <div class="tfa-header">
         <span>📝 Form Auto-fill</span>
-        <button class="tfa-ghost" type="button" data-action="close" title="Ẩn">×</button>
+        <button class="tfa-ghost" type="button" data-action="close" title="Ẩn đến khi reload">×</button>
       </div>
       <div class="tfa-body">
         <div class="tfa-hint">
@@ -516,6 +532,7 @@
           ${hasConfig
             ? 'Đã có cấu hình lưu. Có thể auto-fill hoặc cập nhật.'
             : 'Form mới — dùng AI Gemini để gợi ý điền (thiếu thì dùng sample text), hoặc tự điền rồi lưu.'}
+          <br><span style="color:#888;font-size:11px">Đóng panel sẽ ẩn đến khi reload trang.</span>
         </div>
         <div class="tfa-actions">
           ${hasConfig
@@ -531,7 +548,7 @@
       </div>
     `;
 
-    panel.querySelector('[data-action="close"]').onclick = () => panel.remove();
+    panel.querySelector('[data-action="close"]').onclick = () => hidePanelForThisPage();
     panel.querySelector('[data-action="autofill"]')?.addEventListener('click', () => {
       const filled = applyValues(settingsCache.configs[urlKey]?.fields || {});
       setPanelStatus(filled ? `Đã điền ${filled} trường.` : 'Không khớp trường nào.');
@@ -552,6 +569,9 @@
       setPanelStatus('Đã xóa cấu hình URL này.');
       renderPanel();
     });
+
+    panelShownThisLoad = true;
+    return true;
   }
 
   async function getGeminiCredentials() {
@@ -685,6 +705,7 @@
   }
 
   function maybeAskSaveAfterManualFill() {
+    if (!settingsCache.enabled || panelHiddenThisLoad) return;
     const urlKey = urlPathKey();
     if (settingsCache.configs?.[urlKey]?.fields) return;
     if (settingsCache.dismissed?.[urlKey]) return;
@@ -698,7 +719,7 @@
     showToast('Bạn vừa điền form. Lưu cấu hình cho lần sau?', {
       onYes: async () => {
         await saveUrlConfig(map);
-        renderPanel();
+        if (canShowPanel()) renderPanel();
       },
       onNo: async () => {
         const dismissed = { ...(settingsCache.dismissed || {}), [urlKey]: Date.now() };
@@ -721,16 +742,27 @@
   }
 
   async function tryAutofillFromConfig() {
+    if (!settingsCache.enabled) return 0;
     const urlKey = urlPathKey();
     const config = settingsCache.configs?.[urlKey];
     if (!config?.fields) return 0;
 
     await new Promise((r) => setTimeout(r, 400));
+    if (!settingsCache.enabled) return 0;
     const filled = applyValues(config.fields);
-    if (filled > 0) {
+    if (filled > 0 && canShowPanel()) {
       setPanelStatus(`Auto-fill: đã điền ${filled} trường từ cấu hình đã lưu.`);
     }
     return filled;
+  }
+
+  /** Chỉ thử hiện panel lúc load trang (vài lần delay), không gắn MutationObserver để hiện lại. */
+  function tryShowPanelOnLoad() {
+    if (!canShowPanel() || panelShownThisLoad) return false;
+    if (collectFields().length === 0) return false;
+    renderPanel();
+    tryAutofillFromConfig();
+    return true;
   }
 
   async function init() {
@@ -744,31 +776,22 @@
     }
 
     await loadSettings();
-    if (!settingsCache.enabled) return;
-
-    const fieldCount = collectFields().length;
-    if (fieldCount === 0) {
-      // SPA / form lazy — vẫn gắn observer
-    } else {
-      renderPanel();
-      await tryAutofillFromConfig();
+    if (!settingsCache.enabled) {
+      teardownAutofillUi();
+      return;
     }
 
-    watchManualFill();
-
-    const observer = new MutationObserver(() => {
-      if (isTranslationPrioritySite()) {
-        teardownAutofillUi();
-        return;
-      }
-      if (!settingsCache.enabled) return;
-      if (document.getElementById(PANEL_ID)) return;
-      if (collectFields().length > 0) {
-        renderPanel();
-        tryAutofillFromConfig();
-      }
+    tryShowPanelOnLoad();
+    // Form lazy lúc load: thử thêm vài lần, sau đó thôi (không hiện lại giữa phiên)
+    [600, 1500, 3000].forEach((ms) => {
+      setTimeout(() => {
+        if (settingsCache.enabled && !panelHiddenThisLoad) {
+          tryShowPanelOnLoad();
+        }
+      }, ms);
     });
-    observer.observe(document.documentElement, { childList: true, subtree: true });
+
+    watchManualFill();
   }
 
   chrome.storage.onChanged.addListener((changes, area) => {
@@ -777,17 +800,29 @@
       teardownAutofillUi();
       return;
     }
-    if (
-      changes[STORAGE_KEYS.enabled] ||
-      changes[STORAGE_KEYS.configs] ||
-      changes[STORAGE_KEYS.profile]
-    ) {
+
+    if (changes[STORAGE_KEYS.enabled]) {
+      const enabled = changes[STORAGE_KEYS.enabled].newValue !== false;
+      settingsCache.enabled = enabled;
+      if (!enabled) {
+        // Tắt ngay, chỉ hiện lại khi bật + reload trang
+        hidePanelForThisPage();
+        return;
+      }
+      // Bật lại: không hiện panel giữa phiên — chờ reload
+      return;
+    }
+
+    if (changes[STORAGE_KEYS.configs] || changes[STORAGE_KEYS.profile]) {
       loadSettings().then(() => {
         if (!settingsCache.enabled) {
-          teardownAutofillUi();
+          hidePanelForThisPage();
           return;
         }
-        if (collectFields().length > 0) renderPanel();
+        // Cập nhật nội dung panel nếu đang mở; không mở mới giữa phiên
+        if (document.getElementById(PANEL_ID) && canShowPanel()) {
+          renderPanel();
+        }
       });
     }
   });
