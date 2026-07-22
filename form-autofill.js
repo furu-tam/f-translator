@@ -2,14 +2,13 @@
  * Form Auto-fill
  * - Lưu cấu hình theo full URL path (origin + pathname)
  * - Lần sau vào form → auto fill từ config đã lưu
- * - Form mới → gợi ý bằng Gemini; thiếu giá trị thì fallback sample text
+ * - Form mới → generate value theo input type / định dạng field
  */
 
 (() => {
   const STORAGE_KEYS = {
     enabled: 'formAutofillEnabled',
     configs: 'formAutofillConfigs',
-    profile: 'formAutofillProfile',
     dismissed: 'formAutofillDismissedDomains'
   };
 
@@ -19,17 +18,15 @@
 
   const FILLABLE_TYPES = new Set([
     'text', 'email', 'tel', 'url', 'search', 'password', 'number',
-    'date', 'datetime-local', 'month', 'week', 'time', 'color', ''
+    'date', 'datetime-local', 'month', 'week', 'time', 'color', 'range', ''
   ]);
 
   let settingsCache = {
     enabled: true,
     configs: {},
-    profile: {},
     dismissed: {}
   };
   let savePromptShownFor = new Set();
-  let aiSuggestInFlight = false;
   let initDone = false;
   /** Ẩn panel trong phiên trang hiện tại (× hoặc tắt setting) — chỉ hiện lại khi reload. */
   let panelHiddenThisLoad = false;
@@ -198,7 +195,13 @@
         placeholder: el.placeholder || '',
         label,
         value,
-        options
+        options,
+        min: el.getAttribute('min') || '',
+        max: el.getAttribute('max') || '',
+        step: el.getAttribute('step') || '',
+        maxLength: el.maxLength > 0 ? el.maxLength : 0,
+        pattern: el.getAttribute('pattern') || '',
+        inputMode: el.getAttribute('inputmode') || ''
       });
     });
 
@@ -300,52 +303,121 @@
     return filled;
   }
 
-  /** Fallback sample khi AI không trả giá trị cho field. */
-  function sampleFallbackValue(field) {
+  /**
+   * Generate value theo type / định dạng field (không dùng AI).
+   * Ưu tiên: HTML type → autocomplete → inputmode → label/name.
+   */
+  function generateValueByFieldType(field) {
     const type = String(field.type || 'text').toLowerCase();
-    const label = normalizeLabel(`${field.label || ''} ${field.name || ''} ${field.id || ''} ${field.placeholder || ''}`);
+    const ac = String(field.autocomplete || '').toLowerCase();
+    const inputMode = String(field.inputMode || '').toLowerCase();
+    const label = normalizeLabel(
+      `${field.label || ''} ${field.name || ''} ${field.id || ''} ${field.placeholder || ''} ${ac}`
+    );
 
-    if (type === 'password') return 'SamplePass123!';
+    const clampText = (text) => {
+      const raw = String(text);
+      if (field.maxLength > 0 && raw.length > field.maxLength) {
+        return raw.slice(0, field.maxLength);
+      }
+      return raw;
+    };
+
+    if (type === 'password') return clampText('SamplePass123!');
     if (type === 'checkbox') return 'true';
     if (type === 'radio') {
       if (field.options?.length) return field.options[0].value || field.options[0].text || 'on';
       return field.value || 'on';
     }
-    if (type === 'email' || /email|e-?mail|mail/.test(label)) return 'sample@example.com';
-    if (type === 'tel' || /phone|tel|mobile|sđt|so dien thoai|điện thoại/.test(label)) {
-      return '0901234567';
-    }
-    if (type === 'url' || /website|url|homepage/.test(label)) return 'https://example.com';
-    if (type === 'number' || /age|tuoi|quantity|qty|amount|so luong/.test(label)) return '1';
-    if (type === 'date') return new Date().toISOString().slice(0, 10);
-    if (type === 'datetime-local') return new Date().toISOString().slice(0, 16);
-    if (type === 'time') return '12:00';
-    if (type === 'month') return new Date().toISOString().slice(0, 7);
-    if (type === 'week') return '2026-W01';
-    if (type === 'color') return '#1f6feb';
     if (field.tag === 'select' || type === 'select-one' || type === 'select-multiple') {
       const options = field.options || [];
       const opt = options.find((o) => String(o.value || '').trim() !== '') || options[0];
       return opt ? (opt.value || opt.text || 'sample') : 'sample';
     }
-    if (/name|ho ten|full.?name|first.?name|last.?name|username|user.?name/.test(label)) {
-      return 'Sample User';
-    }
-    if (/company|cong ty|organization|org|workplace/.test(label)) return 'Sample Company';
-    if (/address|dia chi|street|dia.chi/.test(label)) return '123 Sample Street';
-    if (/city|thanh pho|tinh/.test(label)) return 'Sample City';
-    if (/zip|postal|postcode|ma buu chinh/.test(label)) return '100000';
-    if (/country|quoc gia/.test(label)) return 'Vietnam';
-    if (field.tag === 'textarea' || type === 'textarea') return 'Sample text';
-    return 'Sample text';
-  }
 
-  function resolveFillValue(field, suggestions = {}) {
-    const aiValue = suggestions[field.key];
-    if (aiValue != null && String(aiValue).trim() !== '') {
-      return { value: aiValue, source: 'ai' };
+    if (type === 'email' || ac.includes('email') || /email|e-?mail/.test(label)) {
+      return clampText('sample@example.com');
     }
-    return { value: sampleFallbackValue(field), source: 'sample' };
+    if (
+      type === 'tel' ||
+      ac.includes('tel') ||
+      inputMode === 'tel' ||
+      /phone|tel|mobile|sđt|so dien thoai|điện thoại/.test(label)
+    ) {
+      return clampText('0901234567');
+    }
+    if (type === 'url' || ac.includes('url') || /website|url|homepage/.test(label)) {
+      return clampText('https://example.com');
+    }
+    if (type === 'number' || inputMode === 'numeric' || inputMode === 'decimal') {
+      const min = field.min !== '' && !Number.isNaN(Number(field.min)) ? Number(field.min) : null;
+      const max = field.max !== '' && !Number.isNaN(Number(field.max)) ? Number(field.max) : null;
+      let n = 1;
+      if (min != null) n = min;
+      if (max != null && n > max) n = max;
+      if (/age|tuoi/.test(label)) n = Math.min(max ?? 25, Math.max(min ?? 25, 25));
+      return String(n);
+    }
+    if (type === 'date') {
+      const today = new Date().toISOString().slice(0, 10);
+      if (field.min && today < field.min) return field.min;
+      if (field.max && today > field.max) return field.max;
+      return today;
+    }
+    if (type === 'datetime-local') {
+      return new Date().toISOString().slice(0, 16);
+    }
+    if (type === 'time') return '12:00';
+    if (type === 'month') return new Date().toISOString().slice(0, 7);
+    if (type === 'week') {
+      const d = new Date();
+      const oneJan = new Date(d.getFullYear(), 0, 1);
+      const week = Math.ceil((((d - oneJan) / 86400000) + oneJan.getDay() + 1) / 7);
+      return `${d.getFullYear()}-W${String(week).padStart(2, '0')}`;
+    }
+    if (type === 'color') return '#1f6feb';
+    if (type === 'range') {
+      const min = field.min !== '' ? Number(field.min) : 0;
+      const max = field.max !== '' ? Number(field.max) : 100;
+      return String(Math.round((min + max) / 2));
+    }
+
+    // autocomplete / label heuristics for text-like fields
+    if (ac.includes('given-name') || /first.?name|ten|firstname/.test(label)) {
+      return clampText('Van');
+    }
+    if (ac.includes('family-name') || /last.?name|ho|surname|lastname/.test(label)) {
+      return clampText('Nguyen');
+    }
+    if (
+      ac.includes('name') ||
+      /full.?name|ho ten|username|user.?name|display.?name/.test(label)
+    ) {
+      return clampText('Sample User');
+    }
+    if (ac.includes('organization') || /company|cong ty|organization|org|workplace/.test(label)) {
+      return clampText('Sample Company');
+    }
+    if (ac.includes('street-address') || /address|dia chi|street/.test(label)) {
+      return clampText('123 Sample Street');
+    }
+    if (ac.includes('address-level2') || /city|thanh pho/.test(label)) {
+      return clampText('Ha Noi');
+    }
+    if (ac.includes('postal-code') || /zip|postal|postcode|ma buu chinh/.test(label)) {
+      return clampText('100000');
+    }
+    if (ac.includes('country') || /country|quoc gia/.test(label)) {
+      return clampText('VN');
+    }
+    if (/otp|captcha|csrf/.test(label)) return clampText('123456');
+
+    if (field.tag === 'textarea' || type === 'textarea') {
+      return clampText('Sample text for textarea field.');
+    }
+    if (type === 'search') return clampText('sample search');
+
+    return clampText('Sample text');
   }
 
   function buildConfigFromDom() {
@@ -371,13 +443,11 @@
     const data = await chrome.storage.local.get([
       STORAGE_KEYS.enabled,
       STORAGE_KEYS.configs,
-      STORAGE_KEYS.profile,
       STORAGE_KEYS.dismissed
     ]);
     settingsCache = {
       enabled: data[STORAGE_KEYS.enabled] !== false,
       configs: data[STORAGE_KEYS.configs] || {},
-      profile: data[STORAGE_KEYS.profile] || {},
       dismissed: data[STORAGE_KEYS.dismissed] || {}
     };
     return settingsCache;
@@ -530,15 +600,15 @@
         <div class="tfa-hint">
           URL: <strong>${urlKey}</strong><br>
           ${hasConfig
-            ? 'Đã có cấu hình lưu. Có thể auto-fill hoặc cập nhật.'
-            : 'Form mới — dùng AI Gemini để gợi ý điền (thiếu thì dùng sample text), hoặc tự điền rồi lưu.'}
+            ? 'Đã có cấu hình lưu. Có thể auto-fill hoặc generate lại theo type.'
+            : 'Form mới — Generate value theo loại input (email, tel, date…), rồi lưu nếu muốn.'}
           <br><span style="color:#888;font-size:11px">Đóng panel sẽ ẩn đến khi reload trang.</span>
         </div>
         <div class="tfa-actions">
           ${hasConfig
             ? '<button class="tfa-primary" type="button" data-action="autofill">⚡ Auto-fill</button>'
             : ''}
-          <button class="tfa-secondary" type="button" data-action="ai">✨ AI Suggest</button>
+          <button class="tfa-secondary" type="button" data-action="generate">🪄 Generate</button>
           <button class="tfa-secondary" type="button" data-action="save">💾 Lưu cấu hình</button>
           ${hasConfig
             ? '<button class="tfa-danger" type="button" data-action="delete">Xóa cấu hình</button>'
@@ -553,7 +623,7 @@
       const filled = applyValues(settingsCache.configs[urlKey]?.fields || {});
       setPanelStatus(filled ? `Đã điền ${filled} trường.` : 'Không khớp trường nào.');
     });
-    panel.querySelector('[data-action="ai"]').onclick = () => runAiSuggest();
+    panel.querySelector('[data-action="generate"]').onclick = () => runGenerateByType();
     panel.querySelector('[data-action="save"]').onclick = async () => {
       const map = buildConfigFromDom();
       if (!Object.keys(map).length) {
@@ -574,133 +644,36 @@
     return true;
   }
 
-  async function getGeminiCredentials() {
-    const data = await chrome.storage.local.get(['globalSettings', 'geminiKey', 'geminiModel']);
-    const global = data.globalSettings || {};
-    const apiKey = global.apiKey || data.geminiKey || '';
-    const provider = global.provider || 'gemini';
-    const model = global.model || data.geminiModel || 'gemini-2.5-flash';
-
-    if (provider === 'gemini' && apiKey) {
-      return { apiKey, model };
+  function runGenerateByType() {
+    const fields = collectFields();
+    if (!fields.length) {
+      setPanelStatus('Không tìm thấy input để generate.');
+      return;
     }
-    if (data.geminiKey) {
-      return { apiKey: data.geminiKey, model: data.geminiModel || 'gemini-2.5-flash' };
+
+    let filled = 0;
+    fields.forEach((f) => {
+      const el = matchElement(f);
+      if (el && fillField(el, generateValueByFieldType(f))) filled += 1;
+    });
+
+    if (!filled) {
+      setPanelStatus('Không điền được trường nào.');
+      return;
     }
-    return { apiKey: '', model: 'gemini-2.5-flash' };
-  }
 
-  async function runAiSuggest() {
-    if (aiSuggestInFlight) return;
-    aiSuggestInFlight = true;
-    setPanelStatus('Đang hỏi Gemini...');
+    setPanelStatus(`Đã generate ${filled}/${fields.length} trường theo input type. Có muốn lưu?`);
 
-    try {
-      const fields = collectFields();
-      if (!fields.length) {
-        setPanelStatus('Không tìm thấy input để gợi ý.');
-        return;
-      }
-
-      const { apiKey, model } = await getGeminiCredentials();
-      let suggestions = {};
-      let aiError = '';
-
-      if (apiKey) {
-        const response = await new Promise((resolve) => {
-          chrome.runtime.sendMessage(
-            {
-              type: 'SUGGEST_FORM_FILL',
-              apiKey,
-              model,
-              profile: settingsCache.profile || {},
-              domain: location.hostname,
-              url: urlPathKey(),
-              fields: fields.map(({ key, type, name, id, label, placeholder, autocomplete, options, tag }) => ({
-                key, type, name, id, label, placeholder, autocomplete, options, tag
-              }))
-            },
-            (res) => resolve(res)
-          );
-        });
-
-        if (response?.success) {
-          suggestions = response.suggestions || {};
-        } else {
-          aiError = response?.error || 'AI suggest thất bại';
-        }
-      } else {
-        aiError = 'Thiếu Gemini API key — dùng sample text';
-      }
-
-      let filled = 0;
-      let fromAi = 0;
-      let fromSample = 0;
-
-      fields.forEach((f) => {
-        const { value, source } = resolveFillValue(f, suggestions);
-        const el = matchElement(f);
-        if (el && fillField(el, value)) {
-          filled += 1;
-          if (source === 'ai') fromAi += 1;
-          else fromSample += 1;
+    const urlKey = urlPathKey();
+    if (!savePromptShownFor.has(urlKey)) {
+      savePromptShownFor.add(urlKey);
+      showToast('Lưu cấu hình auto-fill cho URL này?', {
+        onYes: async () => {
+          await saveUrlConfig(buildConfigFromDom());
+          setPanelStatus('Đã lưu cấu hình.');
+          renderPanel();
         }
       });
-
-      if (!filled) {
-        setPanelStatus(aiError || 'Không điền được trường nào.');
-        return;
-      }
-
-      const parts = [`Đã điền ${filled}/${fields.length} trường`];
-      if (fromAi) parts.push(`AI: ${fromAi}`);
-      if (fromSample) parts.push(`sample: ${fromSample}`);
-      if (aiError) parts.push(`(${aiError})`);
-      setPanelStatus(`${parts.join(' · ')}. Có muốn lưu?`);
-
-      const urlKey = urlPathKey();
-      if (!savePromptShownFor.has(urlKey)) {
-        savePromptShownFor.add(urlKey);
-        showToast('Lưu cấu hình auto-fill cho URL này?', {
-          onYes: async () => {
-            await saveUrlConfig(buildConfigFromDom());
-            setPanelStatus('Đã lưu cấu hình.');
-            renderPanel();
-          }
-        });
-      }
-    } catch (error) {
-      // AI lỗi vẫn fallback sample cho toàn bộ input
-      try {
-        const fields = collectFields();
-        let filled = 0;
-        fields.forEach((f) => {
-          const el = matchElement(f);
-          if (el && fillField(el, sampleFallbackValue(f))) filled += 1;
-        });
-        setPanelStatus(
-          filled
-            ? `AI lỗi — đã fallback sample cho ${filled} trường. (${error?.message || 'unknown'})`
-            : (error?.message || 'Lỗi AI suggest.')
-        );
-        if (filled > 0) {
-          const urlKey = urlPathKey();
-          if (!savePromptShownFor.has(urlKey)) {
-            savePromptShownFor.add(urlKey);
-            showToast('Lưu cấu hình auto-fill cho URL này?', {
-              onYes: async () => {
-                await saveUrlConfig(buildConfigFromDom());
-                setPanelStatus('Đã lưu cấu hình.');
-                renderPanel();
-              }
-            });
-          }
-        }
-      } catch {
-        setPanelStatus(error?.message || 'Lỗi AI suggest.');
-      }
-    } finally {
-      aiSuggestInFlight = false;
     }
   }
 
@@ -813,7 +786,7 @@
       return;
     }
 
-    if (changes[STORAGE_KEYS.configs] || changes[STORAGE_KEYS.profile]) {
+    if (changes[STORAGE_KEYS.configs]) {
       loadSettings().then(() => {
         if (!settingsCache.enabled) {
           hidePanelForThisPage();

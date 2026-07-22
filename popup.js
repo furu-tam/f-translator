@@ -137,8 +137,7 @@ async function ensureStorageDefaults() {
     'customInstruction',
     'globalPlatformSettings',
     'formAutofillEnabled',
-    'formAutofillConfigs',
-    'formAutofillProfile'
+    'formAutofillConfigs'
   ]);
   const updates = {};
 
@@ -160,9 +159,6 @@ async function ensureStorageDefaults() {
   }
   if (!data.formAutofillConfigs || typeof data.formAutofillConfigs !== 'object') {
     updates.formAutofillConfigs = {};
-  }
-  if (!data.formAutofillProfile || typeof data.formAutofillProfile !== 'object') {
-    updates.formAutofillProfile = {};
   }
 
   if (Object.keys(updates).length > 0) {
@@ -199,7 +195,6 @@ function setupFormHandlers() {
 
   document.getElementById('saveGlobalBtn').addEventListener('click', saveGlobalSettings);
   document.getElementById('addChannelBtn').addEventListener('click', addChannel);
-  document.getElementById('saveAutofillProfileBtn').addEventListener('click', saveAutofillSettings);
   document.getElementById('formAutofillEnabled').addEventListener('change', saveAutofillEnabledOnly);
 }
 
@@ -509,16 +504,9 @@ function showStatus(message, type) {
 
 function loadAutofillSettings() {
   chrome.storage.local.get(
-    ['formAutofillEnabled', 'formAutofillProfile', 'formAutofillConfigs'],
+    ['formAutofillEnabled', 'formAutofillConfigs'],
     (data) => {
       document.getElementById('formAutofillEnabled').checked = data.formAutofillEnabled !== false;
-      const profile = data.formAutofillProfile || {};
-      document.getElementById('profileFullName').value = profile.fullName || '';
-      document.getElementById('profileEmail').value = profile.email || '';
-      document.getElementById('profilePhone').value = profile.phone || '';
-      document.getElementById('profileCompany').value = profile.company || '';
-      document.getElementById('profileAddress').value = profile.address || '';
-      document.getElementById('profileExtra').value = profile.extra || '';
       renderAutofillDomainList(data.formAutofillConfigs || {});
     }
   );
@@ -533,22 +521,6 @@ function saveAutofillEnabledOnly() {
         : '✅ Đã tắt Form Auto-fill (panel ẩn ngay)',
       'success'
     );
-  });
-}
-
-function saveAutofillSettings() {
-  const formAutofillEnabled = document.getElementById('formAutofillEnabled').checked;
-  const formAutofillProfile = {
-    fullName: document.getElementById('profileFullName').value.trim(),
-    email: document.getElementById('profileEmail').value.trim(),
-    phone: document.getElementById('profilePhone').value.trim(),
-    company: document.getElementById('profileCompany').value.trim(),
-    address: document.getElementById('profileAddress').value.trim(),
-    extra: document.getElementById('profileExtra').value.trim()
-  };
-
-  chrome.storage.local.set({ formAutofillEnabled, formAutofillProfile }, () => {
-    showStatus('✅ Đã lưu Form Auto-fill settings', 'success');
   });
 }
 

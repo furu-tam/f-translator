@@ -609,7 +609,7 @@
             <div class="info-box">
                 Auto-fill theo <strong>full URL path</strong> (origin + pathname + query).
                 Điền form 1 lần → hỏi lưu cấu hình. Lần sau vào cùng URL sẽ auto-fill.
-                Form mới: Gemini gợi ý; thiếu giá trị thì fallback sample text.
+                Form mới: bấm <strong>Generate</strong> để tạo value theo loại input (email, tel, date…).
                 <br>Không hiện trên Backlog / Slack / GitHub / Jira để ưu tiên tính năng dịch.
             </div>
 
@@ -625,44 +625,13 @@
             </div>
 
             <div class="panel">
-                <div class="panel-title">👤 Profile cho AI Suggest</div>
-                <div class="setting-group">
-                    <label for="profileFullName">Họ tên</label>
-                    <input type="text" id="profileFullName" placeholder="Nguyen Van A">
-                </div>
-                <div class="setting-group">
-                    <label for="profileEmail">Email</label>
-                    <input type="text" id="profileEmail" placeholder="you@example.com">
-                </div>
-                <div class="setting-group">
-                    <label for="profilePhone">Số điện thoại</label>
-                    <input type="text" id="profilePhone" placeholder="0901234567">
-                </div>
-                <div class="setting-group">
-                    <label for="profileCompany">Công ty</label>
-                    <input type="text" id="profileCompany" placeholder="Company name">
-                </div>
-                <div class="setting-group">
-                    <label for="profileAddress">Địa chỉ</label>
-                    <input type="text" id="profileAddress" placeholder="123 Street, District, City">
-                </div>
-                <div class="setting-group">
-                    <label for="profileExtra">Thông tin thêm (JSON hoặc text tự do)</label>
-                    <textarea id="profileExtra" placeholder='{"jobTitle":"Engineer","city":"Hanoi"}'></textarea>
-                </div>
-                <div class="button-group">
-                    <button class="btn-primary" id="saveAutofillProfileBtn">💾 Lưu Profile & Cài đặt</button>
-                </div>
-            </div>
-
-            <div class="panel">
                 <div class="panel-title">💾 Cấu hình đã lưu theo URL</div>
                 <div id="autofillDomainList"></div>
             </div>
         </div>
 
         <div class="footer">
-            <p>💡 Channel matching sẽ ưu tiên hơn Global. Form Auto-fill dùng Gemini khi bạn bấm AI Suggest trên trang.</p>
+            <p>💡 Channel matching sẽ ưu tiên hơn Global. Form Auto-fill generate value theo input type, không dùng AI.</p>
         </div>
     </div>
 
