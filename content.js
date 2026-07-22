@@ -970,7 +970,7 @@ function injectSlackMessageInputTranslation() {
     option.textContent = name;
     langSelect.appendChild(option);
   });
-  langSelect.value = 'vi';
+  langSelect.value = 'ja';
 
   const translateBtn = document.createElement('button');
   translateBtn.type = 'button';
