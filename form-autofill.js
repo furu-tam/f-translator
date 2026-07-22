@@ -37,6 +37,27 @@
     return `${location.origin}${location.pathname}${location.search || ''}`;
   }
 
+  /**
+   * Các site ưu tiên tính năng dịch — không hiện Form Auto-fill.
+   * Khớp logic detect platform trong content.js: backlog, github, jira, slack.
+   */
+  function isTranslationPrioritySite() {
+    const hostname = (location.hostname || '').toLowerCase();
+
+    if (hostname.includes('backlog')) return true;
+    if (hostname.includes('github.com') || hostname === 'github.com') return true;
+    if (hostname.includes('jira') || hostname.includes('atlassian')) return true;
+    if (hostname === 'app.slack.com' || hostname.endsWith('.slack.com')) return true;
+    if (hostname.includes('gitlab.com') || hostname.includes('bitbucket.org')) return true;
+
+    return false;
+  }
+
+  function teardownAutofillUi() {
+    document.getElementById(PANEL_ID)?.remove();
+    document.getElementById(TOAST_ID)?.remove();
+  }
+
   function normalizeLabel(text) {
     return String(text || '')
       .replace(/\s+/g, ' ')
@@ -470,6 +491,10 @@
   }
 
   function renderPanel() {
+    if (isTranslationPrioritySite()) {
+      teardownAutofillUi();
+      return;
+    }
     ensureStyles();
     const urlKey = urlPathKey();
     const hasConfig = Boolean(settingsCache.configs?.[urlKey]?.fields);
@@ -712,6 +737,12 @@
     if (initDone) return;
     initDone = true;
 
+    // Ưu tiên dịch trên Backlog / Slack / Git / Jira — không chạy auto-fill
+    if (isTranslationPrioritySite()) {
+      teardownAutofillUi();
+      return;
+    }
+
     await loadSettings();
     if (!settingsCache.enabled) return;
 
@@ -726,6 +757,10 @@
     watchManualFill();
 
     const observer = new MutationObserver(() => {
+      if (isTranslationPrioritySite()) {
+        teardownAutofillUi();
+        return;
+      }
       if (!settingsCache.enabled) return;
       if (document.getElementById(PANEL_ID)) return;
       if (collectFields().length > 0) {
@@ -738,6 +773,10 @@
 
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local') return;
+    if (isTranslationPrioritySite()) {
+      teardownAutofillUi();
+      return;
+    }
     if (
       changes[STORAGE_KEYS.enabled] ||
       changes[STORAGE_KEYS.configs] ||
@@ -745,8 +784,7 @@
     ) {
       loadSettings().then(() => {
         if (!settingsCache.enabled) {
-          document.getElementById(PANEL_ID)?.remove();
-          document.getElementById(TOAST_ID)?.remove();
+          teardownAutofillUi();
           return;
         }
         if (collectFields().length > 0) renderPanel();
