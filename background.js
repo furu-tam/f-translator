@@ -40,9 +40,22 @@ chrome.runtime.onInstalled.addListener(() => {
     'customInstruction',
     'globalPlatformSettings',
     'translateMode',
-    'translationHistory'
+    'translationHistory',
+    'formAutofillEnabled',
+    'formAutofillConfigs',
+    'formAutofillProfile'
   ], (data) => {
     const updates = {};
+
+    if (typeof data.formAutofillEnabled === 'undefined') {
+      updates.formAutofillEnabled = true;
+    }
+    if (!data.formAutofillConfigs || typeof data.formAutofillConfigs !== 'object') {
+      updates.formAutofillConfigs = {};
+    }
+    if (!data.formAutofillProfile || typeof data.formAutofillProfile !== 'object') {
+      updates.formAutofillProfile = {};
+    }
 
     if (!data.globalSettings) {
       const provider = data.provider || 'claude';
@@ -102,6 +115,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       sendResponse({ success: false, error: error.message });
     });
     return true; // Keep channel open for async response
+  }
+
+  if (request.type === 'SUGGEST_FORM_FILL') {
+    suggestFormFill(request)
+      .then((suggestions) => sendResponse({ success: true, suggestions }))
+      .catch((error) => sendResponse({ success: false, error: error.message }));
+    return true;
   }
 });
 
@@ -320,6 +340,107 @@ async function translateWithGemini(text, apiKey, model = '', customInstruction =
   }
 
   throw new Error('Gemini: hết số lần thử.');
+}
+
+/**
+ * Gợi ý giá trị điền form bằng Gemini dựa trên label/input + profile người dùng.
+ * Trả về object: { [fieldKey]: value }
+ */
+async function suggestFormFill({ apiKey, model, profile = {}, domain = '', url = '', fields = [] }) {
+  if (!apiKey) {
+    throw new Error('Thiếu Gemini API key để gợi ý form.');
+  }
+  if (!Array.isArray(fields) || fields.length === 0) {
+    throw new Error('Không có field nào để gợi ý.');
+  }
+
+  const selectedModel = model || 'gemini-2.5-flash';
+  const profileText = Object.keys(profile || {}).length
+    ? JSON.stringify(profile, null, 2)
+    : '(chưa có profile — suy luận hợp lý từ label, để trống nếu không chắc)';
+
+  const prompt = `Bạn là trợ lý auto-fill form. Dựa vào PROFILE người dùng và metadata các field, hãy đề xuất giá trị điền.
+
+PROFILE (có thể dùng để điền):
+${profileText}
+
+DOMAIN: ${domain}
+URL: ${url}
+
+FIELDS (JSON):
+${JSON.stringify(fields, null, 2)}
+
+YÊU CẦU:
+- Chỉ trả về JSON object thuần, không markdown, không giải thích.
+- Key phải khớp đúng field.key trong danh sách.
+- Value là string (checkbox dùng "true"/"false"; radio/select dùng value phù hợp).
+- Không điền password / OTP / captcha / credit card / CVV / SSN.
+- Nếu không đủ thông tin cho field nào đó thì bỏ key đó hoặc để "".
+- Ưu tiên khớp theo label, name, id, autocomplete, placeholder.
+- Ngôn ngữ giá trị phù hợp với form (VD form tiếng Việt thì tên địa chỉ tiếng Việt nếu hợp lý).
+
+Ví dụ format:
+{"name:email":"user@example.com","id:full_name":"Nguyen Van A"}`;
+
+  const maxRetries = 3;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    let response;
+    try {
+      response = await fetch(
+        `https://generativelanguage.googleapis.com/v1/models/${selectedModel}:generateContent?key=${apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: {
+              temperature: 0.2,
+              responseMimeType: 'application/json'
+            }
+          })
+        }
+      );
+    } catch (e) {
+      throw enhanceFetchError(e);
+    }
+
+    if (!response.ok) {
+      const errorMsg = await readErrorBody(response);
+      const isQuota = errorMsg.includes('429') || errorMsg.includes('RESOURCE_EXHAUSTED');
+      if (isQuota && attempt < maxRetries) {
+        await new Promise((r) => setTimeout(r, Math.pow(2, attempt + 1) * 1000));
+        continue;
+      }
+      throw new Error(errorMsg);
+    }
+
+    const data = await response.json();
+    const part = data.candidates?.[0]?.content?.parts?.[0];
+    const raw = part?.text;
+    if (!raw) {
+      throw new Error('Gemini trả về nội dung rỗng khi gợi ý form.');
+    }
+
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed;
+      }
+      throw new Error('JSON không phải object');
+    } catch {
+      const match = String(raw).match(/\{[\s\S]*\}/);
+      if (!match) {
+        throw new Error('Không parse được JSON gợi ý form từ Gemini.');
+      }
+      const parsed = JSON.parse(match[0]);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error('JSON gợi ý form không hợp lệ.');
+      }
+      return parsed;
+    }
+  }
+
+  throw new Error('Gemini form suggest: hết số lần thử.');
 }
 
 ensureGoogleSheetsContextMenu();

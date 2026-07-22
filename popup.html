@@ -56,13 +56,13 @@
 
         .tab-btn {
             flex: 1;
-            padding: 12px 16px;
+            padding: 10px 8px;
             background: transparent;
             border: none;
             border-bottom: 3px solid transparent;
             cursor: pointer;
             font-weight: 600;
-            font-size: 13px;
+            font-size: 12px;
             color: #999;
             transition: all 0.2s ease;
         }
@@ -368,6 +368,45 @@
             margin: 0;
             line-height: 1.5;
         }
+
+        .autofill-domain-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            padding: 10px 12px;
+            background: #fff;
+            border: 1px solid #e5e7eb;
+            border-radius: 6px;
+            margin-bottom: 8px;
+        }
+
+        .autofill-domain-item .meta {
+            font-size: 11px;
+            color: #888;
+            margin-top: 2px;
+        }
+
+        .btn-danger-sm {
+            background: #fee2e2;
+            color: #b91c1c;
+            border: none;
+            border-radius: 6px;
+            padding: 6px 10px;
+            font-size: 11px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        .btn-danger-sm:hover {
+            background: #fecaca;
+        }
+
+        .empty-hint {
+            font-size: 12px;
+            color: #999;
+            padding: 8px 0;
+        }
     </style>
 </head>
 <body>
@@ -381,8 +420,9 @@
         </div>
 
         <div class="tabs">
-            <button class="tab-btn active" data-tab="global">Global Settings</button>
-            <button class="tab-btn" data-tab="channels">Channel Settings</button>
+            <button class="tab-btn active" data-tab="global">Global</button>
+            <button class="tab-btn" data-tab="channels">Channels</button>
+            <button class="tab-btn" data-tab="autofill">Form Auto-fill</button>
         </div>
 
         <div class="status" id="status"></div>
@@ -560,8 +600,59 @@
             </div>
         </div>
 
+        <div class="tab-content" id="autofill-tab">
+            <div class="info-box">
+                Auto-fill theo <strong>domain</strong>. Điền form 1 lần → hỏi lưu cấu hình.
+                Lần sau vào cùng domain sẽ auto-fill. Form mới có thể dùng Gemini gợi ý từ label + profile.
+            </div>
+
+            <div class="panel">
+                <div class="panel-title">⚙️ Bật / Tắt</div>
+                <label class="form-toggle">
+                    <input type="checkbox" id="formAutofillEnabled" checked>
+                    Bật Form Auto-fill trên các trang
+                </label>
+            </div>
+
+            <div class="panel">
+                <div class="panel-title">👤 Profile cho AI Suggest</div>
+                <div class="setting-group">
+                    <label for="profileFullName">Họ tên</label>
+                    <input type="text" id="profileFullName" placeholder="Nguyen Van A">
+                </div>
+                <div class="setting-group">
+                    <label for="profileEmail">Email</label>
+                    <input type="text" id="profileEmail" placeholder="you@example.com">
+                </div>
+                <div class="setting-group">
+                    <label for="profilePhone">Số điện thoại</label>
+                    <input type="text" id="profilePhone" placeholder="0901234567">
+                </div>
+                <div class="setting-group">
+                    <label for="profileCompany">Công ty</label>
+                    <input type="text" id="profileCompany" placeholder="Company name">
+                </div>
+                <div class="setting-group">
+                    <label for="profileAddress">Địa chỉ</label>
+                    <input type="text" id="profileAddress" placeholder="123 Street, District, City">
+                </div>
+                <div class="setting-group">
+                    <label for="profileExtra">Thông tin thêm (JSON hoặc text tự do)</label>
+                    <textarea id="profileExtra" placeholder='{"jobTitle":"Engineer","city":"Hanoi"}'></textarea>
+                </div>
+                <div class="button-group">
+                    <button class="btn-primary" id="saveAutofillProfileBtn">💾 Lưu Profile & Cài đặt</button>
+                </div>
+            </div>
+
+            <div class="panel">
+                <div class="panel-title">💾 Cấu hình đã lưu theo domain</div>
+                <div id="autofillDomainList"></div>
+            </div>
+        </div>
+
         <div class="footer">
-            <p>💡 Channel matching sẽ ưu tiên hơn Global. Nếu không có channel phù hợp thì extension sẽ fallback sang Global Settings.</p>
+            <p>💡 Channel matching sẽ ưu tiên hơn Global. Form Auto-fill dùng Gemini khi bạn bấm AI Suggest trên trang.</p>
         </div>
     </div>
 
