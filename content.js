@@ -261,7 +261,7 @@ async function getMatchingChannelSettings() {
 }
 
 // Get effective settings for the current platform.
-// Priority: matching channel -> global settings.
+// Priority: matching enabled channel (đủ config) -> global settings.
 async function getEffectiveSettings() {
   const current = detectCurrentPlatform();
   const { platform, domain } = current;
@@ -292,24 +292,24 @@ async function getEffectiveSettings() {
 
   if (channelSettings) {
     if (channelSettings.enabled === false) {
-      console.log('[Channel] Matching channel is disabled:', channelSettings);
-      return null;
+      console.log('[Channel] Matching channel is disabled — fallback to global:', channelSettings);
+    } else if (!channelSettings.provider || !channelSettings.apiKey || !channelSettings.model) {
+      console.log(
+        '[Channel] Incomplete channel settings — fallback to global for',
+        platform,
+        domain || '(global)'
+      );
+    } else {
+      return {
+        ...current,
+        provider: channelSettings.provider,
+        apiKey: channelSettings.apiKey,
+        model: channelSettings.model,
+        customInstruction: channelSettings.customInstruction || '',
+        source: 'channel',
+        channel: channelSettings
+      };
     }
-
-    if (!channelSettings.provider || !channelSettings.apiKey || !channelSettings.model) {
-      console.log('[Channel] Incomplete detailed settings for', platform, domain || '(global)');
-      return null;
-    }
-
-    return {
-      ...current,
-      provider: channelSettings.provider,
-      apiKey: channelSettings.apiKey,
-      model: channelSettings.model,
-      customInstruction: channelSettings.customInstruction || '',
-      source: 'channel',
-      channel: channelSettings
-    };
   }
 
   if (!globalSettings.enabledPlatforms[platform]) {

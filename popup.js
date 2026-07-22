@@ -362,7 +362,7 @@ function renderChannelList(channels) {
   }
 
   list.innerHTML = channels.map((channel) => `
-    <div class="channel-item">
+    <div class="channel-item" data-channel-id="${escapeHtml(channel.id)}">
       <div class="channel-info">
         <div class="channel-name">
           <span>🔷 ${escapeHtml(channel.name || buildDefaultChannelName(channel.platform, channel.domain))}</span>
@@ -376,13 +376,27 @@ function renderChannelList(channels) {
         </div>
       </div>
       <div class="channel-actions">
-        <button class="btn-secondary" onclick="toggleChannelEnabled('${escapeHtml(channel.id)}')">
+        <button class="btn-secondary" type="button" data-action="toggle-channel">
           ${channel.enabled ? 'Turn Off' : 'Turn On'}
         </button>
-        <button class="btn-danger" onclick="deleteChannel('${escapeHtml(channel.id)}')">Delete</button>
+        <button class="btn-danger" type="button" data-action="delete-channel">Delete</button>
       </div>
     </div>
   `).join('');
+
+  list.querySelectorAll('[data-action="toggle-channel"]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const id = btn.closest('[data-channel-id]')?.dataset.channelId;
+      if (id) toggleChannelEnabled(id);
+    });
+  });
+
+  list.querySelectorAll('[data-action="delete-channel"]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const id = btn.closest('[data-channel-id]')?.dataset.channelId;
+      if (id) deleteChannel(id);
+    });
+  });
 }
 
 function buildDefaultChannelName(platform, domain) {
@@ -470,9 +484,10 @@ function clearChannelForm() {
 }
 
 function toggleChannelEnabled(id) {
+  const targetId = String(id || '');
   chrome.storage.local.get(['channelSettings'], (data) => {
     const channels = (data.channelSettings || []).map((channel) => {
-      if (channel.id !== id) {
+      if (String(channel.id) !== targetId) {
         return channel;
       }
 
@@ -490,12 +505,25 @@ function toggleChannelEnabled(id) {
 }
 
 function deleteChannel(id) {
+  const targetId = String(id || '');
+  if (!targetId) {
+    showStatus('❌ Không tìm thấy channel để xoá', 'error');
+    return;
+  }
+
   if (!confirm('Xoá channel này?')) {
     return;
   }
 
   chrome.storage.local.get(['channelSettings'], (data) => {
-    const channels = (data.channelSettings || []).filter((channel) => channel.id !== id);
+    const before = Array.isArray(data.channelSettings) ? data.channelSettings : [];
+    const channels = before.filter((channel) => String(channel.id) !== targetId);
+
+    if (channels.length === before.length) {
+      showStatus('❌ Không xoá được channel (id không khớp)', 'error');
+      return;
+    }
+
     chrome.storage.local.set({ channelSettings: channels }, () => {
       loadChannelSettings();
       showStatus('✅ Đã xoá channel', 'success');
