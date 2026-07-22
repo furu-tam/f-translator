@@ -1,8 +1,8 @@
 /**
  * Form Auto-fill
- * - Lưu cấu hình theo domain (hostname)
+ * - Lưu cấu hình theo full URL path (origin + pathname)
  * - Lần sau vào form → auto fill từ config đã lưu
- * - Form mới → gợi ý bằng Gemini dựa trên label + input
+ * - Form mới → gợi ý bằng Gemini; thiếu giá trị thì fallback sample text
  */
 
 (() => {
@@ -32,8 +32,9 @@
   let aiSuggestInFlight = false;
   let initDone = false;
 
-  function hostnameKey() {
-    return location.hostname || 'localhost';
+  /** Key cấu hình = full URL path (không gồm hash). */
+  function urlPathKey() {
+    return `${location.origin}${location.pathname}${location.search || ''}`;
   }
 
   function normalizeLabel(text) {
@@ -105,6 +106,7 @@
   function collectFields(root = document) {
     const nodes = root.querySelectorAll('input, textarea, select');
     const fields = [];
+    const seenRadioNames = new Set();
 
     nodes.forEach((el) => {
       if (el.closest(`#${PANEL_ID}`)) return;
@@ -118,17 +120,35 @@
         }
       }
 
+      if (el.type === 'radio') {
+        const radioName = el.name || el.id || fieldKey(el);
+        if (seenRadioNames.has(radioName)) return;
+        seenRadioNames.add(radioName);
+      }
+
       const key = fieldKey(el);
       const label = getLabelForField(el);
       let value = '';
+      let options;
 
       if (el.type === 'checkbox') {
         value = el.checked ? 'true' : 'false';
       } else if (el.type === 'radio') {
-        if (!el.checked) return;
-        value = el.value;
+        const radios = el.name
+          ? Array.from(document.querySelectorAll(`input[type="radio"][name="${CSS.escape(el.name)}"]`))
+          : [el];
+        const checked = radios.find((r) => r.checked);
+        value = checked ? checked.value : (radios[0]?.value || '');
+        options = radios.map((r) => ({
+          value: r.value,
+          text: getLabelForField(r) || r.value
+        }));
       } else {
         value = el.value || '';
+      }
+
+      if (tag === 'select') {
+        options = Array.from(el.options).map((o) => ({ value: o.value, text: o.textContent.trim() }));
       }
 
       fields.push({
@@ -141,9 +161,7 @@
         placeholder: el.placeholder || '',
         label,
         value,
-        options: tag === 'select'
-          ? Array.from(el.options).map((o) => ({ value: o.value, text: o.textContent.trim() }))
-          : undefined
+        options
       });
     });
 
@@ -245,6 +263,54 @@
     return filled;
   }
 
+  /** Fallback sample khi AI không trả giá trị cho field. */
+  function sampleFallbackValue(field) {
+    const type = String(field.type || 'text').toLowerCase();
+    const label = normalizeLabel(`${field.label || ''} ${field.name || ''} ${field.id || ''} ${field.placeholder || ''}`);
+
+    if (type === 'password') return 'SamplePass123!';
+    if (type === 'checkbox') return 'true';
+    if (type === 'radio') {
+      if (field.options?.length) return field.options[0].value || field.options[0].text || 'on';
+      return field.value || 'on';
+    }
+    if (type === 'email' || /email|e-?mail|mail/.test(label)) return 'sample@example.com';
+    if (type === 'tel' || /phone|tel|mobile|sđt|so dien thoai|điện thoại/.test(label)) {
+      return '0901234567';
+    }
+    if (type === 'url' || /website|url|homepage/.test(label)) return 'https://example.com';
+    if (type === 'number' || /age|tuoi|quantity|qty|amount|so luong/.test(label)) return '1';
+    if (type === 'date') return new Date().toISOString().slice(0, 10);
+    if (type === 'datetime-local') return new Date().toISOString().slice(0, 16);
+    if (type === 'time') return '12:00';
+    if (type === 'month') return new Date().toISOString().slice(0, 7);
+    if (type === 'week') return '2026-W01';
+    if (type === 'color') return '#1f6feb';
+    if (field.tag === 'select' || type === 'select-one' || type === 'select-multiple') {
+      const options = field.options || [];
+      const opt = options.find((o) => String(o.value || '').trim() !== '') || options[0];
+      return opt ? (opt.value || opt.text || 'sample') : 'sample';
+    }
+    if (/name|ho ten|full.?name|first.?name|last.?name|username|user.?name/.test(label)) {
+      return 'Sample User';
+    }
+    if (/company|cong ty|organization|org|workplace/.test(label)) return 'Sample Company';
+    if (/address|dia chi|street|dia.chi/.test(label)) return '123 Sample Street';
+    if (/city|thanh pho|tinh/.test(label)) return 'Sample City';
+    if (/zip|postal|postcode|ma buu chinh/.test(label)) return '100000';
+    if (/country|quoc gia/.test(label)) return 'Vietnam';
+    if (field.tag === 'textarea' || type === 'textarea') return 'Sample text';
+    return 'Sample text';
+  }
+
+  function resolveFillValue(field, suggestions = {}) {
+    const aiValue = suggestions[field.key];
+    if (aiValue != null && String(aiValue).trim() !== '') {
+      return { value: aiValue, source: 'ai' };
+    }
+    return { value: sampleFallbackValue(field), source: 'sample' };
+  }
+
   function buildConfigFromDom() {
     const fields = collectFields();
     const map = {};
@@ -280,10 +346,10 @@
     return settingsCache;
   }
 
-  async function saveDomainConfig(fieldsMap) {
-    const domain = hostnameKey();
+  async function saveUrlConfig(fieldsMap) {
+    const key = urlPathKey();
     const configs = { ...(settingsCache.configs || {}) };
-    configs[domain] = {
+    configs[key] = {
       fields: fieldsMap,
       updatedAt: Date.now(),
       url: location.href
@@ -292,9 +358,9 @@
     await chrome.storage.local.set({ [STORAGE_KEYS.configs]: configs });
   }
 
-  async function deleteDomainConfig(domain) {
+  async function deleteUrlConfig(key) {
     const configs = { ...(settingsCache.configs || {}) };
-    delete configs[domain];
+    delete configs[key];
     settingsCache.configs = configs;
     await chrome.storage.local.set({ [STORAGE_KEYS.configs]: configs });
   }
@@ -330,7 +396,7 @@
         font-weight: 700;
       }
       #${PANEL_ID} .tfa-body { padding: 12px 14px; }
-      #${PANEL_ID} .tfa-hint { color: #666; margin-bottom: 10px; line-height: 1.4; }
+      #${PANEL_ID} .tfa-hint { color: #666; margin-bottom: 10px; line-height: 1.4; word-break: break-all; }
       #${PANEL_ID} .tfa-actions { display: flex; flex-wrap: wrap; gap: 8px; }
       #${PANEL_ID} button {
         border: none;
@@ -405,8 +471,8 @@
 
   function renderPanel() {
     ensureStyles();
-    const domain = hostnameKey();
-    const hasConfig = Boolean(settingsCache.configs?.[domain]?.fields);
+    const urlKey = urlPathKey();
+    const hasConfig = Boolean(settingsCache.configs?.[urlKey]?.fields);
     let panel = document.getElementById(PANEL_ID);
     if (!panel) {
       panel = document.createElement('div');
@@ -421,10 +487,10 @@
       </div>
       <div class="tfa-body">
         <div class="tfa-hint">
-          Domain: <strong>${domain}</strong><br>
+          URL: <strong>${urlKey}</strong><br>
           ${hasConfig
             ? 'Đã có cấu hình lưu. Có thể auto-fill hoặc cập nhật.'
-            : 'Form mới — dùng AI Gemini để gợi ý điền, hoặc tự điền rồi lưu.'}
+            : 'Form mới — dùng AI Gemini để gợi ý điền (thiếu thì dùng sample text), hoặc tự điền rồi lưu.'}
         </div>
         <div class="tfa-actions">
           ${hasConfig
@@ -442,7 +508,7 @@
 
     panel.querySelector('[data-action="close"]').onclick = () => panel.remove();
     panel.querySelector('[data-action="autofill"]')?.addEventListener('click', () => {
-      const filled = applyValues(settingsCache.configs[domain]?.fields || {});
+      const filled = applyValues(settingsCache.configs[urlKey]?.fields || {});
       setPanelStatus(filled ? `Đã điền ${filled} trường.` : 'Không khớp trường nào.');
     });
     panel.querySelector('[data-action="ai"]').onclick = () => runAiSuggest();
@@ -452,13 +518,13 @@
         setPanelStatus('Chưa có giá trị nào để lưu.');
         return;
       }
-      await saveDomainConfig(map);
-      setPanelStatus(`Đã lưu ${Object.keys(map).length} trường cho ${domain}.`);
+      await saveUrlConfig(map);
+      setPanelStatus(`Đã lưu ${Object.keys(map).length} trường cho URL này.`);
       renderPanel();
     };
     panel.querySelector('[data-action="delete"]')?.addEventListener('click', async () => {
-      await deleteDomainConfig(domain);
-      setPanelStatus('Đã xóa cấu hình domain này.');
+      await deleteUrlConfig(urlKey);
+      setPanelStatus('Đã xóa cấu hình URL này.');
       renderPanel();
     });
   }
@@ -485,89 +551,132 @@
     setPanelStatus('Đang hỏi Gemini...');
 
     try {
-      const fields = collectFields().filter((f) => f.type !== 'password');
+      const fields = collectFields();
       if (!fields.length) {
         setPanelStatus('Không tìm thấy input để gợi ý.');
         return;
       }
 
       const { apiKey, model } = await getGeminiCredentials();
-      if (!apiKey) {
-        setPanelStatus('Thiếu Gemini API key. Cấu hình trong popup (provider Gemini).');
-        return;
-      }
+      let suggestions = {};
+      let aiError = '';
 
-      const response = await new Promise((resolve) => {
-        chrome.runtime.sendMessage(
-          {
-            type: 'SUGGEST_FORM_FILL',
-            apiKey,
-            model,
-            profile: settingsCache.profile || {},
-            domain: hostnameKey(),
-            url: location.href,
-            fields: fields.map(({ key, type, name, id, label, placeholder, autocomplete, options }) => ({
-              key, type, name, id, label, placeholder, autocomplete, options
-            }))
-          },
-          (res) => resolve(res)
-        );
-      });
+      if (apiKey) {
+        const response = await new Promise((resolve) => {
+          chrome.runtime.sendMessage(
+            {
+              type: 'SUGGEST_FORM_FILL',
+              apiKey,
+              model,
+              profile: settingsCache.profile || {},
+              domain: location.hostname,
+              url: urlPathKey(),
+              fields: fields.map(({ key, type, name, id, label, placeholder, autocomplete, options, tag }) => ({
+                key, type, name, id, label, placeholder, autocomplete, options, tag
+              }))
+            },
+            (res) => resolve(res)
+          );
+        });
 
-      if (!response?.success) {
-        setPanelStatus(response?.error || 'AI suggest thất bại.');
-        return;
-      }
-
-      const suggestions = response.suggestions || {};
-      let filled = 0;
-      fields.forEach((f) => {
-        const value = suggestions[f.key];
-        if (value == null || value === '') return;
-        const el = matchElement(f);
-        if (el && fillField(el, value)) filled += 1;
-      });
-
-      setPanelStatus(filled ? `AI đã gợi ý ${filled} trường. Có muốn lưu?` : 'AI không trả về giá trị phù hợp.');
-
-      if (filled > 0) {
-        const domain = hostnameKey();
-        if (!savePromptShownFor.has(domain)) {
-          savePromptShownFor.add(domain);
-          showToast('Lưu cấu hình auto-fill cho domain này?', {
-            onYes: async () => {
-              await saveDomainConfig(buildConfigFromDom());
-              setPanelStatus('Đã lưu cấu hình.');
-              renderPanel();
-            }
-          });
+        if (response?.success) {
+          suggestions = response.suggestions || {};
+        } else {
+          aiError = response?.error || 'AI suggest thất bại';
         }
+      } else {
+        aiError = 'Thiếu Gemini API key — dùng sample text';
+      }
+
+      let filled = 0;
+      let fromAi = 0;
+      let fromSample = 0;
+
+      fields.forEach((f) => {
+        const { value, source } = resolveFillValue(f, suggestions);
+        const el = matchElement(f);
+        if (el && fillField(el, value)) {
+          filled += 1;
+          if (source === 'ai') fromAi += 1;
+          else fromSample += 1;
+        }
+      });
+
+      if (!filled) {
+        setPanelStatus(aiError || 'Không điền được trường nào.');
+        return;
+      }
+
+      const parts = [`Đã điền ${filled}/${fields.length} trường`];
+      if (fromAi) parts.push(`AI: ${fromAi}`);
+      if (fromSample) parts.push(`sample: ${fromSample}`);
+      if (aiError) parts.push(`(${aiError})`);
+      setPanelStatus(`${parts.join(' · ')}. Có muốn lưu?`);
+
+      const urlKey = urlPathKey();
+      if (!savePromptShownFor.has(urlKey)) {
+        savePromptShownFor.add(urlKey);
+        showToast('Lưu cấu hình auto-fill cho URL này?', {
+          onYes: async () => {
+            await saveUrlConfig(buildConfigFromDom());
+            setPanelStatus('Đã lưu cấu hình.');
+            renderPanel();
+          }
+        });
       }
     } catch (error) {
-      setPanelStatus(error?.message || 'Lỗi AI suggest.');
+      // AI lỗi vẫn fallback sample cho toàn bộ input
+      try {
+        const fields = collectFields();
+        let filled = 0;
+        fields.forEach((f) => {
+          const el = matchElement(f);
+          if (el && fillField(el, sampleFallbackValue(f))) filled += 1;
+        });
+        setPanelStatus(
+          filled
+            ? `AI lỗi — đã fallback sample cho ${filled} trường. (${error?.message || 'unknown'})`
+            : (error?.message || 'Lỗi AI suggest.')
+        );
+        if (filled > 0) {
+          const urlKey = urlPathKey();
+          if (!savePromptShownFor.has(urlKey)) {
+            savePromptShownFor.add(urlKey);
+            showToast('Lưu cấu hình auto-fill cho URL này?', {
+              onYes: async () => {
+                await saveUrlConfig(buildConfigFromDom());
+                setPanelStatus('Đã lưu cấu hình.');
+                renderPanel();
+              }
+            });
+          }
+        }
+      } catch {
+        setPanelStatus(error?.message || 'Lỗi AI suggest.');
+      }
     } finally {
       aiSuggestInFlight = false;
     }
   }
 
   function maybeAskSaveAfterManualFill() {
-    const domain = hostnameKey();
-    if (settingsCache.configs?.[domain]?.fields) return;
-    if (settingsCache.dismissed?.[domain]) return;
-    if (savePromptShownFor.has(`manual:${domain}`)) return;
+    const urlKey = urlPathKey();
+    if (settingsCache.configs?.[urlKey]?.fields) return;
+    if (settingsCache.dismissed?.[urlKey]) return;
+    if (savePromptShownFor.has(`manual:${urlKey}`)) return;
 
     const map = buildConfigFromDom();
     const meaningful = Object.values(map).filter((f) => f.type !== 'checkbox' || f.value === 'true');
     if (meaningful.length < 2) return;
 
-    savePromptShownFor.add(`manual:${domain}`);
+    savePromptShownFor.add(`manual:${urlKey}`);
     showToast('Bạn vừa điền form. Lưu cấu hình cho lần sau?', {
       onYes: async () => {
-        await saveDomainConfig(map);
+        await saveUrlConfig(map);
         renderPanel();
       },
       onNo: async () => {
-        const dismissed = { ...(settingsCache.dismissed || {}), [domain]: Date.now() };
+        const dismissed = { ...(settingsCache.dismissed || {}), [urlKey]: Date.now() };
         settingsCache.dismissed = dismissed;
         await chrome.storage.local.set({ [STORAGE_KEYS.dismissed]: dismissed });
       }
@@ -587,8 +696,8 @@
   }
 
   async function tryAutofillFromConfig() {
-    const domain = hostnameKey();
-    const config = settingsCache.configs?.[domain];
+    const urlKey = urlPathKey();
+    const config = settingsCache.configs?.[urlKey];
     if (!config?.fields) return 0;
 
     await new Promise((r) => setTimeout(r, 400));

@@ -544,7 +544,7 @@ function renderAutofillDomainList(configs) {
   const domains = Object.keys(configs || {});
 
   if (!domains.length) {
-    container.innerHTML = '<div class="empty-hint">Chưa có domain nào được lưu.</div>';
+    container.innerHTML = '<div class="empty-hint">Chưa có URL nào được lưu.</div>';
     return;
   }
 

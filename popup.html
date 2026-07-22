@@ -387,6 +387,11 @@
             margin-top: 2px;
         }
 
+        .autofill-domain-item strong {
+            font-size: 12px;
+            word-break: break-all;
+        }
+
         .btn-danger-sm {
             background: #fee2e2;
             color: #b91c1c;
@@ -602,8 +607,9 @@
 
         <div class="tab-content" id="autofill-tab">
             <div class="info-box">
-                Auto-fill theo <strong>domain</strong>. Điền form 1 lần → hỏi lưu cấu hình.
-                Lần sau vào cùng domain sẽ auto-fill. Form mới có thể dùng Gemini gợi ý từ label + profile.
+                Auto-fill theo <strong>full URL path</strong> (origin + pathname + query).
+                Điền form 1 lần → hỏi lưu cấu hình. Lần sau vào cùng URL sẽ auto-fill.
+                Form mới: Gemini gợi ý; thiếu giá trị thì fallback sample text.
             </div>
 
             <div class="panel">
@@ -646,7 +652,7 @@
             </div>
 
             <div class="panel">
-                <div class="panel-title">💾 Cấu hình đã lưu theo domain</div>
+                <div class="panel-title">💾 Cấu hình đã lưu theo URL</div>
                 <div id="autofillDomainList"></div>
             </div>
         </div>

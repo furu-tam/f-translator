@@ -359,28 +359,28 @@ async function suggestFormFill({ apiKey, model, profile = {}, domain = '', url =
     ? JSON.stringify(profile, null, 2)
     : '(chưa có profile — suy luận hợp lý từ label, để trống nếu không chắc)';
 
-  const prompt = `Bạn là trợ lý auto-fill form. Dựa vào PROFILE người dùng và metadata các field, hãy đề xuất giá trị điền.
+  const prompt = `Bạn là trợ lý auto-fill form. Dựa vào PROFILE người dùng và metadata các field, hãy đề xuất giá trị điền CHO MỌI FIELD.
 
 PROFILE (có thể dùng để điền):
 ${profileText}
 
-DOMAIN: ${domain}
-URL: ${url}
+URL PATH: ${url}
+HOSTNAME: ${domain}
 
 FIELDS (JSON):
 ${JSON.stringify(fields, null, 2)}
 
 YÊU CẦU:
 - Chỉ trả về JSON object thuần, không markdown, không giải thích.
-- Key phải khớp đúng field.key trong danh sách.
-- Value là string (checkbox dùng "true"/"false"; radio/select dùng value phù hợp).
-- Không điền password / OTP / captcha / credit card / CVV / SSN.
-- Nếu không đủ thông tin cho field nào đó thì bỏ key đó hoặc để "".
+- Bắt buộc có đủ mọi field.key trong danh sách (không bỏ sót).
+- Value là string (checkbox dùng "true"/"false"; radio/select dùng value phù hợp từ options nếu có).
+- Không điền OTP / captcha / credit card / CVV / SSN bằng dữ liệu nhạy cảm thật — dùng placeholder an toàn nếu bắt buộc có key.
+- Nếu không đủ thông tin profile thì vẫn phải trả sample hợp lý theo type/label (VD email → sample@example.com, text → "Sample text", tel → "0901234567").
 - Ưu tiên khớp theo label, name, id, autocomplete, placeholder.
-- Ngôn ngữ giá trị phù hợp với form (VD form tiếng Việt thì tên địa chỉ tiếng Việt nếu hợp lý).
+- Ngôn ngữ giá trị phù hợp với form.
 
 Ví dụ format:
-{"name:email":"user@example.com","id:full_name":"Nguyen Van A"}`;
+{"name:email":"user@example.com","id:full_name":"Nguyen Van A","name:note":"Sample text"}`;
 
   const maxRetries = 3;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
