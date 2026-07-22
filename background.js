@@ -42,7 +42,8 @@ chrome.runtime.onInstalled.addListener(() => {
     'translateMode',
     'translationHistory',
     'formAutofillEnabled',
-    'formAutofillConfigs'
+    'formAutofillConfigs',
+    'formAutofillAllowedDomains'
   ], (data) => {
     const updates = {};
 
@@ -51,6 +52,9 @@ chrome.runtime.onInstalled.addListener(() => {
     }
     if (!data.formAutofillConfigs || typeof data.formAutofillConfigs !== 'object') {
       updates.formAutofillConfigs = {};
+    }
+    if (!Array.isArray(data.formAutofillAllowedDomains)) {
+      updates.formAutofillAllowedDomains = [];
     }
 
     if (!data.globalSettings) {

@@ -610,7 +610,7 @@
                 Auto-fill theo <strong>full URL path</strong> (origin + pathname + query).
                 Điền form 1 lần → hỏi lưu cấu hình. Lần sau vào cùng URL sẽ auto-fill.
                 Form mới: bấm <strong>Generate</strong> để tạo value theo loại input (email, tel, date…).
-                <br>Không hiện trên Backlog / Slack / GitHub / Jira để ưu tiên tính năng dịch.
+                <br>Chỉ hiện trên domain trong <strong>Allow list</strong>. Không hiện trên Backlog / Slack / GitHub / Jira.
             </div>
 
             <div class="panel">
@@ -621,7 +621,24 @@
                 </label>
                 <p style="font-size: 11px; color: #888; margin-top: 8px; line-height: 1.4;">
                     Tắt sẽ ẩn panel ngay. Bật lại chỉ hiện panel sau khi reload trang.
+                    Chỉ hiện trên domain trong Allow list bên dưới.
                 </p>
+            </div>
+
+            <div class="panel">
+                <div class="panel-title">✅ Allow domains</div>
+                <p style="font-size: 11px; color: #888; margin-bottom: 10px; line-height: 1.4;">
+                    Chỉ các domain được thêm vào đây mới hiện Form Auto-fill.
+                    Domain khác sẽ không hiển thị.
+                </p>
+                <div class="setting-group">
+                    <label for="autofillAllowDomainInput">Domain (VD: example.com)</label>
+                    <div style="display: flex; gap: 8px;">
+                        <input type="text" id="autofillAllowDomainInput" placeholder="example.com" style="flex: 1;">
+                        <button class="btn-primary" id="addAutofillAllowDomainBtn" type="button" style="white-space: nowrap;">➕ Thêm</button>
+                    </div>
+                </div>
+                <div id="autofillAllowDomainList"></div>
             </div>
 
             <div class="panel">
@@ -631,7 +648,7 @@
         </div>
 
         <div class="footer">
-            <p>💡 Channel matching sẽ ưu tiên hơn Global. Form Auto-fill generate value theo input type, không dùng AI.</p>
+            <p>💡 Channel matching sẽ ưu tiên hơn Global. Form Auto-fill chỉ chạy trên Allow domains.</p>
         </div>
     </div>
 

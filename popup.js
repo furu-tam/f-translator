@@ -42,6 +42,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 window.deleteChannel = deleteChannel;
 window.toggleChannelEnabled = toggleChannelEnabled;
 window.deleteAutofillDomain = deleteAutofillDomain;
+window.removeAutofillAllowDomain = removeAutofillAllowDomain;
 
 function getDefaultEnabledPlatforms() {
   return {
@@ -137,7 +138,8 @@ async function ensureStorageDefaults() {
     'customInstruction',
     'globalPlatformSettings',
     'formAutofillEnabled',
-    'formAutofillConfigs'
+    'formAutofillConfigs',
+    'formAutofillAllowedDomains'
   ]);
   const updates = {};
 
@@ -159,6 +161,9 @@ async function ensureStorageDefaults() {
   }
   if (!data.formAutofillConfigs || typeof data.formAutofillConfigs !== 'object') {
     updates.formAutofillConfigs = {};
+  }
+  if (!Array.isArray(data.formAutofillAllowedDomains)) {
+    updates.formAutofillAllowedDomains = [];
   }
 
   if (Object.keys(updates).length > 0) {
@@ -196,6 +201,13 @@ function setupFormHandlers() {
   document.getElementById('saveGlobalBtn').addEventListener('click', saveGlobalSettings);
   document.getElementById('addChannelBtn').addEventListener('click', addChannel);
   document.getElementById('formAutofillEnabled').addEventListener('change', saveAutofillEnabledOnly);
+  document.getElementById('addAutofillAllowDomainBtn').addEventListener('click', addAutofillAllowDomain);
+  document.getElementById('autofillAllowDomainInput').addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      addAutofillAllowDomain();
+    }
+  });
 }
 
 function updateProviderModelGroups(scope, provider) {
@@ -502,11 +514,20 @@ function showStatus(message, type) {
   }, 4000);
 }
 
+function normalizeAutofillDomain(input) {
+  let value = String(input || '').trim().toLowerCase();
+  if (!value) return '';
+  value = value.replace(/^https?:\/\//, '').replace(/^www\./, '');
+  value = value.split('/')[0].split('?')[0].split('#')[0];
+  return value.replace(/:\d+$/, '');
+}
+
 function loadAutofillSettings() {
   chrome.storage.local.get(
-    ['formAutofillEnabled', 'formAutofillConfigs'],
+    ['formAutofillEnabled', 'formAutofillConfigs', 'formAutofillAllowedDomains'],
     (data) => {
       document.getElementById('formAutofillEnabled').checked = data.formAutofillEnabled !== false;
+      renderAutofillAllowDomainList(data.formAutofillAllowedDomains || []);
       renderAutofillDomainList(data.formAutofillConfigs || {});
     }
   );
@@ -517,10 +538,76 @@ function saveAutofillEnabledOnly() {
   chrome.storage.local.set({ formAutofillEnabled }, () => {
     showStatus(
       formAutofillEnabled
-        ? '✅ Đã bật Form Auto-fill (hiện lại sau khi reload trang)'
+        ? '✅ Đã bật Form Auto-fill (chỉ hiện trên Allow domains, sau reload)'
         : '✅ Đã tắt Form Auto-fill (panel ẩn ngay)',
       'success'
     );
+  });
+}
+
+function renderAutofillAllowDomainList(domains) {
+  const container = document.getElementById('autofillAllowDomainList');
+  const list = (Array.isArray(domains) ? domains : [])
+    .map(normalizeAutofillDomain)
+    .filter(Boolean);
+
+  if (!list.length) {
+    container.innerHTML = '<div class="empty-hint">Chưa có domain nào được allow — Form Auto-fill sẽ không hiện ở đâu.</div>';
+    return;
+  }
+
+  container.innerHTML = list.map((domain) => `
+    <div class="autofill-domain-item" data-allow-domain="${escapeHtml(domain)}">
+      <div>
+        <strong>${escapeHtml(domain)}</strong>
+      </div>
+      <button class="btn-danger-sm" type="button" data-action="remove-allow-domain">Xóa</button>
+    </div>
+  `).join('');
+
+  container.querySelectorAll('[data-action="remove-allow-domain"]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const domain = btn.closest('[data-allow-domain]')?.dataset.allowDomain;
+      if (domain) removeAutofillAllowDomain(domain);
+    });
+  });
+}
+
+function addAutofillAllowDomain() {
+  const input = document.getElementById('autofillAllowDomainInput');
+  const domain = normalizeAutofillDomain(input.value);
+  if (!domain) {
+    showStatus('❌ Vui lòng nhập domain hợp lệ', 'error');
+    return;
+  }
+
+  chrome.storage.local.get(['formAutofillAllowedDomains'], (data) => {
+    const list = Array.isArray(data.formAutofillAllowedDomains)
+      ? data.formAutofillAllowedDomains.map(normalizeAutofillDomain).filter(Boolean)
+      : [];
+    if (list.includes(domain)) {
+      showStatus('⚠️ Domain đã có trong Allow list', 'error');
+      return;
+    }
+    list.push(domain);
+    chrome.storage.local.set({ formAutofillAllowedDomains: list }, () => {
+      input.value = '';
+      renderAutofillAllowDomainList(list);
+      showStatus(`✅ Đã allow ${domain}`, 'success');
+    });
+  });
+}
+
+function removeAutofillAllowDomain(domain) {
+  const target = normalizeAutofillDomain(domain);
+  chrome.storage.local.get(['formAutofillAllowedDomains'], (data) => {
+    const list = (Array.isArray(data.formAutofillAllowedDomains) ? data.formAutofillAllowedDomains : [])
+      .map(normalizeAutofillDomain)
+      .filter((item) => item && item !== target);
+    chrome.storage.local.set({ formAutofillAllowedDomains: list }, () => {
+      renderAutofillAllowDomainList(list);
+      showStatus(`✅ Đã gỡ ${target} khỏi Allow list`, 'success');
+    });
   });
 }
 

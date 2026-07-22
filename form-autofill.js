@@ -9,6 +9,7 @@
   const STORAGE_KEYS = {
     enabled: 'formAutofillEnabled',
     configs: 'formAutofillConfigs',
+    allowedDomains: 'formAutofillAllowedDomains',
     dismissed: 'formAutofillDismissedDomains'
   };
 
@@ -24,6 +25,7 @@
   let settingsCache = {
     enabled: true,
     configs: {},
+    allowedDomains: [],
     dismissed: {}
   };
   let savePromptShownFor = new Set();
@@ -53,6 +55,26 @@
     return false;
   }
 
+  function normalizeDomain(input) {
+    let value = String(input || '').trim().toLowerCase();
+    if (!value) return '';
+    value = value.replace(/^https?:\/\//, '').replace(/^www\./, '');
+    value = value.split('/')[0].split('?')[0].split('#')[0];
+    return value.replace(/:\d+$/, '');
+  }
+
+  /** Chỉ hiện trên domain nằm trong Allow list (exact hoặc subdomain). */
+  function isAllowedDomain() {
+    const hostname = normalizeDomain(location.hostname);
+    const allowed = settingsCache.allowedDomains || [];
+    if (!hostname || !allowed.length) return false;
+    return allowed.some((entry) => {
+      const domain = normalizeDomain(entry);
+      if (!domain) return false;
+      return hostname === domain || hostname.endsWith(`.${domain}`);
+    });
+  }
+
   function teardownAutofillUi() {
     document.getElementById(PANEL_ID)?.remove();
     document.getElementById(TOAST_ID)?.remove();
@@ -62,7 +84,8 @@
     return (
       settingsCache.enabled &&
       !panelHiddenThisLoad &&
-      !isTranslationPrioritySite()
+      !isTranslationPrioritySite() &&
+      isAllowedDomain()
     );
   }
 
@@ -443,11 +466,16 @@
     const data = await chrome.storage.local.get([
       STORAGE_KEYS.enabled,
       STORAGE_KEYS.configs,
+      STORAGE_KEYS.allowedDomains,
       STORAGE_KEYS.dismissed
     ]);
+    const allowedRaw = data[STORAGE_KEYS.allowedDomains];
     settingsCache = {
       enabled: data[STORAGE_KEYS.enabled] !== false,
       configs: data[STORAGE_KEYS.configs] || {},
+      allowedDomains: Array.isArray(allowedRaw)
+        ? allowedRaw.map(normalizeDomain).filter(Boolean)
+        : [],
       dismissed: data[STORAGE_KEYS.dismissed] || {}
     };
     return settingsCache;
@@ -749,7 +777,7 @@
     }
 
     await loadSettings();
-    if (!settingsCache.enabled) {
+    if (!settingsCache.enabled || !isAllowedDomain()) {
       teardownAutofillUi();
       return;
     }
@@ -758,7 +786,7 @@
     // Form lazy lúc load: thử thêm vài lần, sau đó thôi (không hiện lại giữa phiên)
     [600, 1500, 3000].forEach((ms) => {
       setTimeout(() => {
-        if (settingsCache.enabled && !panelHiddenThisLoad) {
+        if (settingsCache.enabled && !panelHiddenThisLoad && isAllowedDomain()) {
           tryShowPanelOnLoad();
         }
       }, ms);
@@ -786,10 +814,22 @@
       return;
     }
 
+    if (changes[STORAGE_KEYS.allowedDomains]) {
+      const next = changes[STORAGE_KEYS.allowedDomains].newValue;
+      settingsCache.allowedDomains = Array.isArray(next)
+        ? next.map(normalizeDomain).filter(Boolean)
+        : [];
+      if (!isAllowedDomain()) {
+        teardownAutofillUi();
+      }
+      // Domain vừa được allow: chỉ hiện lại sau reload
+      return;
+    }
+
     if (changes[STORAGE_KEYS.configs]) {
       loadSettings().then(() => {
-        if (!settingsCache.enabled) {
-          hidePanelForThisPage();
+        if (!settingsCache.enabled || !isAllowedDomain()) {
+          teardownAutofillUi();
           return;
         }
         // Cập nhật nội dung panel nếu đang mở; không mở mới giữa phiên
