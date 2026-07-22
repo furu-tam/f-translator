@@ -852,92 +852,156 @@ function setSlackEditorText(editor, text) {
   editor.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
 }
 
+function getSlackActiveMessageInput() {
+  const inputs = Array.from(document.querySelectorAll('[data-qa="message_input"]')).filter((input) =>
+    Boolean(input.querySelector('[data-qa="texty_input"][contenteditable="true"]'))
+  );
+  if (inputs.length === 0) return null;
+
+  const focused = document.activeElement?.closest?.('[data-qa="message_input"]');
+  if (focused && inputs.includes(focused)) {
+    return focused;
+  }
+
+  const mainInput = inputs.find((input) =>
+    !input.closest(
+      '[data-qa="threads_flexpane"], .p-threads_flexpane, [data-qa="thread_view"], .p-message_pane_input--secondary'
+    )
+  );
+  return mainInput || inputs[inputs.length - 1];
+}
+
+function cleanupSlackInputTranslationDuplicates(keepInput = null) {
+  const controls = Array.from(document.querySelectorAll('[data-translator-slack-input="true"]'));
+  let keepControls = null;
+
+  if (keepInput) {
+    keepControls = controls.find((el) => el.nextElementSibling === keepInput) || null;
+  }
+
+  controls.forEach((el) => {
+    if (el !== keepControls) {
+      el.remove();
+    }
+  });
+
+  const previews = Array.from(document.querySelectorAll('[data-translator-slack-preview="true"]'));
+  if (keepInput) {
+    const keepPreview = previews.find((el) => {
+      const nearbyInput = el.nextElementSibling === keepInput
+        || el.parentElement?.contains(keepInput);
+      return nearbyInput;
+    }) || null;
+    previews.forEach((el) => {
+      if (el !== keepPreview) {
+        el.remove();
+      }
+    });
+  } else {
+    previews.forEach((el) => el.remove());
+  }
+
+  document.querySelectorAll('[data-qa="texty_input"][data-translator-slack-editor="true"]').forEach((editor) => {
+    const input = editor.closest('[data-qa="message_input"]');
+    if (!keepInput || input !== keepInput) {
+      editor.removeAttribute('data-translator-slack-editor');
+    }
+  });
+
+  return keepControls;
+}
+
 function injectSlackMessageInputTranslation() {
   ensureSlackTranslatorStyles();
 
-  document.querySelectorAll('[data-qa="message_input"]').forEach((inputContainer) => {
-    const editor = inputContainer.querySelector('[data-qa="texty_input"][contenteditable="true"]');
-    if (!editor) return;
+  const inputContainer = getSlackActiveMessageInput();
+  if (!inputContainer) {
+    cleanupSlackInputTranslationDuplicates(null);
+    return;
+  }
 
-    const insertionPoint = inputContainer.parentElement;
-    if (!insertionPoint) return;
-    if (inputContainer.previousElementSibling?.getAttribute('data-translator-slack-input') === 'true') {
+  const existingControls = cleanupSlackInputTranslationDuplicates(inputContainer);
+  if (existingControls) {
+    return;
+  }
+
+  const editor = inputContainer.querySelector('[data-qa="texty_input"][contenteditable="true"]');
+  const insertionPoint = inputContainer.parentElement;
+  if (!editor || !insertionPoint) return;
+
+  const composer = inputContainer.closest(
+    '[data-qa="composer_body"], .p-composer, .c-wysiwyg_container'
+  ) || insertionPoint;
+
+  const controlsDiv = document.createElement('div');
+  controlsDiv.className = 'translator-slack-input-controls';
+  controlsDiv.setAttribute('data-translator-slack-input', 'true');
+  controlsDiv.style.cssText = `
+    gap: 8px;
+    align-items: center;
+    padding: 8px 12px;
+    background: #f8f8f8;
+    border: 1px solid #e8e8e8;
+    border-radius: 8px;
+    margin-bottom: 8px;
+    flex-wrap: wrap;
+  `;
+
+  const langSelect = document.createElement('select');
+  langSelect.className = 'translator-slack-lang-select';
+  langSelect.style.cssText = `
+    padding: 6px 10px;
+    border: 1px solid #cfcfcf;
+    border-radius: 4px;
+    background: white;
+    font-size: 12px;
+    cursor: pointer;
+    min-width: 180px;
+  `;
+
+  const defaultOption = document.createElement('option');
+  defaultOption.value = '';
+  defaultOption.textContent = '📖 Chọn ngôn ngữ...';
+  langSelect.appendChild(defaultOption);
+
+  Object.entries(SUPPORTED_LANGUAGES).forEach(([code, name]) => {
+    const option = document.createElement('option');
+    option.value = code;
+    option.textContent = name;
+    langSelect.appendChild(option);
+  });
+  langSelect.value = 'vi';
+
+  const translateBtn = document.createElement('button');
+  translateBtn.type = 'button';
+  translateBtn.textContent = '🌐 Dịch';
+  translateBtn.style.cssText = `
+    background: linear-gradient(135deg, #611f69 0%, #4a154b 100%);
+    color: white;
+    border: none;
+    padding: 6px 14px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+  `;
+
+  translateBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!langSelect.value) {
+      alert('❌ Vui lòng chọn ngôn ngữ');
       return;
     }
-
-    const composer = inputContainer.closest(
-      '[data-qa="composer_body"], .p-composer, .c-wysiwyg_container, [class*="composer"]'
-    ) || insertionPoint;
-
-    const controlsDiv = document.createElement('div');
-    controlsDiv.className = 'translator-slack-input-controls';
-    controlsDiv.setAttribute('data-translator-slack-input', 'true');
-    controlsDiv.style.cssText = `
-      gap: 8px;
-      align-items: center;
-      padding: 8px 12px;
-      background: #f8f8f8;
-      border: 1px solid #e8e8e8;
-      border-radius: 8px;
-      margin-bottom: 8px;
-      flex-wrap: wrap;
-    `;
-
-    const langSelect = document.createElement('select');
-    langSelect.className = 'translator-slack-lang-select';
-    langSelect.style.cssText = `
-      padding: 6px 10px;
-      border: 1px solid #cfcfcf;
-      border-radius: 4px;
-      background: white;
-      font-size: 12px;
-      cursor: pointer;
-      min-width: 180px;
-    `;
-
-    const defaultOption = document.createElement('option');
-    defaultOption.value = '';
-    defaultOption.textContent = '📖 Chọn ngôn ngữ...';
-    langSelect.appendChild(defaultOption);
-
-    Object.entries(SUPPORTED_LANGUAGES).forEach(([code, name]) => {
-      const option = document.createElement('option');
-      option.value = code;
-      option.textContent = name;
-      langSelect.appendChild(option);
-    });
-    langSelect.value = 'vi';
-
-    const translateBtn = document.createElement('button');
-    translateBtn.type = 'button';
-    translateBtn.textContent = '🌐 Dịch';
-    translateBtn.style.cssText = `
-      background: linear-gradient(135deg, #611f69 0%, #4a154b 100%);
-      color: white;
-      border: none;
-      padding: 6px 14px;
-      border-radius: 4px;
-      cursor: pointer;
-      font-size: 12px;
-      font-weight: 600;
-      white-space: nowrap;
-    `;
-
-    translateBtn.addEventListener('click', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (!langSelect.value) {
-        alert('❌ Vui lòng chọn ngôn ngữ');
-        return;
-      }
-      translateSlackMessageInputContent(editor, langSelect.value, composer, translateBtn);
-    });
-
-    controlsDiv.appendChild(langSelect);
-    controlsDiv.appendChild(translateBtn);
-    insertionPoint.insertBefore(controlsDiv, inputContainer);
-    bindSlackInputControlsVisibility(editor, inputContainer, controlsDiv, composer);
+    translateSlackMessageInputContent(editor, langSelect.value, composer, translateBtn);
   });
+
+  controlsDiv.appendChild(langSelect);
+  controlsDiv.appendChild(translateBtn);
+  insertionPoint.insertBefore(controlsDiv, inputContainer);
+  editor.setAttribute('data-translator-slack-editor', 'true');
+  bindSlackInputControlsVisibility(editor, inputContainer, controlsDiv, composer);
 }
 
 function translateSlackMessageInputContent(editor, language, composer, button) {
@@ -993,10 +1057,7 @@ function translateSlackMessageInputContent(editor, language, composer, button) {
 }
 
 function displaySlackMessageInputTranslationPreview(editor, composer, translation) {
-  const existingPreview = composer.querySelector('[data-translator-slack-preview="true"]');
-  if (existingPreview) {
-    existingPreview.remove();
-  }
+  document.querySelectorAll('[data-translator-slack-preview="true"]').forEach((el) => el.remove());
 
   const formattedTranslation = formatTranslationText(translation);
   const resultDiv = document.createElement('div');
@@ -1068,12 +1129,16 @@ function displaySlackMessageInputTranslationPreview(editor, composer, translatio
     resultDiv.remove();
   });
 
-  const inputContainer = composer.querySelector('[data-qa="message_input"]');
-  const inputControls = inputContainer?.previousElementSibling;
-  if (inputControls?.getAttribute('data-translator-slack-input') === 'true') {
+  const inputContainer = editor.closest('[data-qa="message_input"]')
+    || composer.querySelector('[data-qa="message_input"]');
+  const inputControls = document.querySelector('[data-translator-slack-input="true"]');
+  if (inputControls) {
     inputControls.classList.add('is-visible');
   }
-  if (inputContainer?.parentElement) {
+
+  if (inputControls?.parentElement) {
+    inputControls.parentElement.insertBefore(resultDiv, inputControls);
+  } else if (inputContainer?.parentElement) {
     inputContainer.parentElement.insertBefore(resultDiv, inputContainer);
   } else {
     composer.insertBefore(resultDiv, composer.firstChild);
